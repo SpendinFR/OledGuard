@@ -1,9 +1,12 @@
-name: Build Windows executable
+name: Build OledGuard native Windows
 
 on:
   workflow_dispatch:
   push:
     branches: [ main ]
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -17,21 +20,34 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Publish OledGuard
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore .\src\OledGuard\OledGuard.csproj
+
+      - name: Publish portable Windows executable
         shell: pwsh
         run: |
           dotnet publish .\src\OledGuard\OledGuard.csproj `
             -c Release `
             -r win-x64 `
             --self-contained true `
+            --no-restore `
             -p:PublishSingleFile=true `
-            -p:PublishReadyToRun=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=true `
+            -p:PublishTrimmed=false `
             -p:DebugType=None `
             -p:DebugSymbols=false `
             -o .\dist\OledGuard
 
+          Get-FileHash .\dist\OledGuard\OledGuard.exe -Algorithm SHA256 |
+            ForEach-Object { "{0}  OledGuard.exe" -f $_.Hash.ToLowerInvariant() } |
+            Set-Content .\dist\OledGuard\SHA256.txt -Encoding ascii
+
       - name: Upload executable
         uses: actions/upload-artifact@v4
         with:
-          name: OledGuard-win-x64
+          name: OledGuard-native-win-x64
           path: dist/OledGuard/**
+          if-no-files-found: error
+          retention-days: 14

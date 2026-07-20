@@ -3,24 +3,35 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
-    <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <LangVersion>latest</LangVersion>
+
     <AssemblyName>OledGuard</AssemblyName>
     <RootNamespace>OledGuard</RootNamespace>
-    <Version>3.2.1</Version>
+    <StartupObject>OledGuard.Program</StartupObject>
+    <Version>4.0.0</Version>
     <Product>OledGuard</Product>
-    <Description>Protection OLED par exposition lumineuse cumulative et assombrissement local progressif.</Description>
-    <Authors>OledGuard contributors</Authors>
-    <Platforms>x64</Platforms>
+    <Description>Protection OLED native Windows par dÃ©tection locale des Ã©lÃ©ments lumineux statiques.</Description>
+    <Authors>SpendinFR</Authors>
+
     <PlatformTarget>x64</PlatformTarget>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <PublishSingleFile>true</PublishSingleFile>
-    <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
     <DebugType>embedded</DebugType>
-    <InvariantGlobalization>false</InvariantGlobalization>
+
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <EnableDefaultPageItems>false</EnableDefaultPageItems>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="NativeGuard.cs" />
+  </ItemGroup>
 </Project>

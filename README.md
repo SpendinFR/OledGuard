@@ -1,41 +1,45 @@
-# OledGuard 3.2 — exposition cumulative
+# OledGuard 4 â€” moteur natif Windows
 
-OledGuard assombrit progressivement les zones lumineuses qui restent réellement statiques sur un écran OLED.
+OledGuard dÃ©tecte les Ã©lÃ©ments lumineux qui restent immobiles sur une TV ou un moniteur OLED, puis les assombrit localement sans bloquer la souris : textes blancs, croix de fermeture, icÃ´nes, bordures et grandes zones blanches.
 
-## Changement principal
+Cette version a Ã©tÃ© rÃ©Ã©crite de zÃ©ro en **C#/.NET natif**. Elle n'utilise pas Python et ne reprend pas l'ancien moteur cumulatif.
 
-La version 3.2 ne considère plus qu'un mouvement remet le risque à zéro.
+## Fonctionnement par dÃ©faut
 
-- chaque sous-zone conserve une dette d'exposition lumineuse ;
-- la dette augmente selon la durée, la stabilité et la luminance ;
-- une interruption courte révèle immédiatement l'image mais ne supprime presque pas la dette ;
-- avec le réglage par défaut, une seconde de mouvement retire seulement 0,2 seconde d'exposition équivalente ;
-- la dette est sauvegardée dans `%LOCALAPPDATA%\OledGuard\exposure` et survit aux redémarrages ;
-- le masque tient compte de la lumière restante après assombrissement afin de ne pas compter la zone comme si elle était encore à pleine luminosité.
+- choix de l'Ã©cran OLED au premier dÃ©marrage ;
+- capture rÃ©duite de l'Ã©cran toutes les 750 ms ;
+- dÃ©tection du mouvement pixel par pixel ;
+- dÃ©but de l'assombrissement aprÃ¨s 30 secondes d'immobilitÃ© ;
+- force progressive jusqu'Ã  60 % maximum ;
+- disparition rapide du masque dÃ¨s qu'un Ã©lÃ©ment bouge ;
+- petite zone rÃ©vÃ©lÃ©e autour du curseur ;
+- overlay transparent aux clics et exclu de la capture pour Ã©viter une boucle visuelle.
 
-## Valeurs par défaut
+Tous les seuils sont modifiables depuis **clic droit sur l'icÃ´ne OledGuard â†’ ParamÃ¨tres**.
 
-- stabilité avant accumulation : 30 secondes ;
-- début de l'assombrissement : 8 minutes équivalentes à blanc maximal ;
-- protection maximale : 25 minutes équivalentes à blanc maximal ;
-- attente après mouvement avant retour du masque : 12 secondes ;
-- assombrissement maximal : 35 % ;
-- fondu vers sombre : 12 secondes ;
-- réapparition : 1,2 seconde ;
-- sauvegarde de la dette : toutes les 5 minutes.
+## TÃ©lÃ©charger l'exÃ©cutable compilÃ©
 
-Les couleurs sombres cumulent très peu de dette. Les blancs et interfaces claires cumulent nettement plus vite grâce à une pondération non linéaire de la luminance.
+1. Ouvrir l'onglet **Actions** du dÃ©pÃ´t.
+2. Ouvrir le dernier workflow vert **Build OledGuard native Windows**.
+3. TÃ©lÃ©charger l'artifact **OledGuard-native-win-x64**.
+4. DÃ©compresser puis lancer `OledGuard.exe`.
 
-## Détection
+L'exÃ©cutable est autonome : aucun Python et aucun .NET Ã  installer.
 
-- références courte, moyenne et longue ;
-- âge indépendant pour chaque sous-zone ;
-- nettoyage bidirectionnel des petits îlots et trous ;
-- opacité uniforme dans chaque région connectée pour éviter les bandes internes ;
-- aucune capture vidéo 4K conservée.
+## Commandes
 
-## Commandes existantes
+Depuis l'icÃ´ne prÃ¨s de l'horloge Windows :
 
-- `Ctrl + Alt + O` : activer ou désactiver ;
-- `Ctrl + Alt + R` : révéler tout pendant 10 secondes ;
-- clic droit sur l'icône : paramètres et fermeture.
+- activer ou mettre en pause la protection ;
+- rÃ©vÃ©ler tout l'Ã©cran pendant 20 secondes ;
+- rÃ©initialiser la dÃ©tection ;
+- modifier les paramÃ¨tres ;
+- choisir un autre Ã©cran ;
+- lancer automatiquement OledGuard avec Windows ;
+- quitter complÃ¨tement le programme.
+
+Un double-clic sur l'icÃ´ne active ou met en pause la protection.
+
+## Limites
+
+Le programme complÃ¨te les protections intÃ©grÃ©es de la TV, mais ne garantit pas l'absence totale de marquage. Les jeux en plein Ã©cran exclusif, certains contenus DRM et certaines configurations HDR peuvent empÃªcher Windows d'afficher l'overlay correctement. Le mode fenÃªtrÃ© sans bordure est le plus compatible.
