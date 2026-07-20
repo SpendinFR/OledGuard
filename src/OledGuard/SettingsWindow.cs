@@ -23,9 +23,7 @@ internal sealed class SettingsWindow : Window
 {
     private readonly ComboBox _delay;
     private readonly ComboBox _cellSize;
-    private readonly Slider _contentFeather;
-    private readonly Slider _mousePadding;
-    private readonly Slider _mouseFeather;
+    private readonly Slider _mouseRadius;
     private readonly Slider _mouseHold;
     private readonly Slider _darkenFade;
     private readonly Slider _revealFade;
@@ -34,10 +32,10 @@ internal sealed class SettingsWindow : Window
     public SettingsWindow(AppSettings settings)
     {
         Title = "OledGuard — Paramètres";
-        Width = 530;
-        Height = 660;
-        MinWidth = 480;
-        MinHeight = 600;
+        Width = 500;
+        Height = 570;
+        MinWidth = 450;
+        MinHeight = 520;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         ResizeMode = ResizeMode.CanMinimize;
         Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(245, 245, 245));
@@ -49,10 +47,10 @@ internal sealed class SettingsWindow : Window
 
         var heading = new TextBlock
         {
-            Text = "Protection OLED par blocs actifs",
+            Text = "Protection OLED par carrés",
             FontSize = 22,
             FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 0, 0, 12)
+            Margin = new Thickness(0, 0, 0, 14)
         };
         Grid.SetRow(heading, 0);
         root.Children.Add(heading);
@@ -61,14 +59,51 @@ internal sealed class SettingsWindow : Window
         Grid.SetRow(form, 1);
         root.Children.Add(form);
 
-        _delay = AddCombo(form, "Durée visible après une activité", new[] { 5, 15, 30, 60, 120 }, settings.StaticDelaySeconds, "secondes");
-        _cellSize = AddCombo(form, "Précision de détection", new[] { 24, 32, 40, 48, 64 }, settings.CellSizePixels, "pixels par cellule");
-        _contentFeather = AddSlider(form, "Dégradé autour d'une zone de contenu", 16, 180, settings.ContentFeatherRadiusPixels, "px");
-        _mousePadding = AddSlider(form, "Marge rectangulaire autour du trajet souris", 0, 120, settings.MouseRevealRadiusPixels, "px");
-        _mouseFeather = AddSlider(form, "Dégradé autour du trajet souris", 16, 180, settings.MouseFeatherRadiusPixels, "px");
-        _mouseHold = AddSlider(form, "Durée visible après passage de la souris", 5, 60, settings.MouseRevealHoldMilliseconds / 1000.0, "s");
-        _revealFade = AddSlider(form, "Réapparition", 40, 500, settings.RevealFadeMilliseconds, "ms");
-        _darkenFade = AddSlider(form, "Retour uniforme au noir", 1, 12, settings.DarkenFadeMilliseconds / 1000.0, "s");
+        _delay = AddCombo(
+            form,
+            "Temps avant mise au noir",
+            new[] { 5, 15, 30, 60, 120 },
+            settings.StaticDelaySeconds,
+            "secondes");
+
+        _cellSize = AddCombo(
+            form,
+            "Taille des carrés",
+            new[] { 32, 40, 48, 56, 64 },
+            settings.CellSizePixels,
+            "pixels");
+
+        _mouseRadius = AddSlider(
+            form,
+            "Zone révélée autour de la souris",
+            48,
+            240,
+            settings.MouseRevealRadiusPixels,
+            "px");
+
+        _mouseHold = AddSlider(
+            form,
+            "Durée visible après la souris",
+            5,
+            60,
+            settings.MouseRevealHoldMilliseconds / 1000.0,
+            "s");
+
+        _revealFade = AddSlider(
+            form,
+            "Réapparition",
+            40,
+            500,
+            settings.RevealFadeMilliseconds,
+            "ms");
+
+        _darkenFade = AddSlider(
+            form,
+            "Fondu vers le noir",
+            300,
+            5000,
+            settings.DarkenFadeMilliseconds,
+            "ms");
 
         _startWithWindows = new CheckBox
         {
@@ -81,7 +116,7 @@ internal sealed class SettingsWindow : Window
 
         var note = new TextBlock
         {
-            Text = "Réglage conseillé : 30 s, grille 32 px, dégradé contenu 72 px, marge souris 40 px et dégradé souris 72 px. Les petits clignotements restent minuscules. Un trajet de souris forme un bloc rectangulaire qui s'éteint ensemble. Ctrl+Alt+O active/désactive et Ctrl+Alt+R révèle tout pendant 10 s.",
+            Text = "Réglage conseillé : 30 s, carrés de 48 px, rayon souris 120 px. Aucun flou spatial : seulement des carrés nets avec un fondu temporel. Le trajet de souris reçoit une expiration commune pour s'éteindre uniformément. Ctrl+Alt+O active ou désactive ; Ctrl+Alt+R révèle tout pendant 10 s.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = System.Windows.Media.Brushes.DimGray,
             Margin = new Thickness(0, 16, 0, 0)
@@ -133,18 +168,21 @@ internal sealed class SettingsWindow : Window
         var updated = original.Clone();
         updated.StaticDelaySeconds = (int)_delay.SelectedItem;
         updated.CellSizePixels = (int)_cellSize.SelectedItem;
-        updated.ContentFeatherRadiusPixels = (int)Math.Round(_contentFeather.Value);
-        updated.MouseRevealRadiusPixels = (int)Math.Round(_mousePadding.Value);
-        updated.MouseFeatherRadiusPixels = (int)Math.Round(_mouseFeather.Value);
+        updated.MouseRevealRadiusPixels = (int)Math.Round(_mouseRadius.Value);
         updated.MouseRevealHoldMilliseconds = (int)Math.Round(_mouseHold.Value * 1000.0);
         updated.RevealFadeMilliseconds = (int)Math.Round(_revealFade.Value);
-        updated.DarkenFadeMilliseconds = (int)Math.Round(_darkenFade.Value * 1000.0);
+        updated.DarkenFadeMilliseconds = (int)Math.Round(_darkenFade.Value);
         updated.StartWithWindows = _startWithWindows.IsChecked == true;
         updated.Normalize();
         return updated;
     }
 
-    private static ComboBox AddCombo(StackPanel parent, string label, int[] values, int selected, string suffix)
+    private static ComboBox AddCombo(
+        StackPanel parent,
+        string label,
+        int[] values,
+        int selected,
+        string suffix)
     {
         parent.Children.Add(new TextBlock
         {
@@ -178,7 +216,13 @@ internal sealed class SettingsWindow : Window
         return combo;
     }
 
-    private static Slider AddSlider(StackPanel parent, string label, double minimum, double maximum, double value, string suffix)
+    private static Slider AddSlider(
+        StackPanel parent,
+        string label,
+        double minimum,
+        double maximum,
+        double value,
+        string suffix)
     {
         parent.Children.Add(new TextBlock
         {
@@ -190,7 +234,7 @@ internal sealed class SettingsWindow : Window
         var panel = new DockPanel();
         var valueText = new TextBlock
         {
-            Width = 78,
+            Width = 82,
             TextAlignment = TextAlignment.Right,
             VerticalAlignment = VerticalAlignment.Center
         };

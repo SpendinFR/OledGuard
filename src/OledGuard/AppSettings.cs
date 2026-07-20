@@ -5,52 +5,38 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 5;
+    public const int CurrentSchemaVersion = 6;
 
-    // Keep zero as the deserialization default so older settings files without
-    // SchemaVersion are migrated instead of silently keeping prototype values.
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
 
-    // A changed or mouse-revealed area remains active for this long.
+    // A cell that changes remains visible for this long before it may darken.
     public int StaticDelaySeconds { get; set; } = 30;
 
-    // Detection grid. The rendered mask is internally upscaled and interpolated,
-    // so this value mostly controls analysis cost and the minimum activity block.
-    public int CellSizePixels { get; set; } = 32;
-    public int SamplesPerCell { get; set; } = 3;
-    public int VisibleSamplingMilliseconds { get; set; } = 1000;
+    // Small square grid: close to the original look, but finer than the first MVP.
+    public int CellSizePixels { get; set; } = 48;
+    public int SamplesPerCell { get; set; } = 4;
+    public int VisibleSamplingMilliseconds { get; set; } = 500;
     public int MaskedSamplingMilliseconds { get; set; } = 250;
 
-    // Temporal transitions.
-    public int DarkenFadeMilliseconds { get; set; } = 5000;
-    public int RevealFadeMilliseconds { get; set; } = 140;
+    // Temporal fades only. There is intentionally no spatial blur.
+    public int DarkenFadeMilliseconds { get; set; } = 1200;
+    public int RevealFadeMilliseconds { get; set; } = 120;
 
-    // Content activity is grouped into rectangular components. Large components
-    // receive a compact square-edged feather; isolated blinking pixels use a much
-    // smaller feather so they do not light a large circular area.
-    public int ContentFeatherRadiusPixels { get; set; } = 72;
-    public int MicroFeatherRadiusPixels { get; set; } = 18;
-    public int ContentActivationPaddingCells { get; set; } = 0;
-    public int ContentMergeGapCells { get; set; } = 2;
-    public int MicroChangeMaxCells { get; set; } = 3;
-
-    // Mouse movement is collected as one rectangular stroke. Every cell in that
-    // stroke receives the same expiry time, so the whole block fades uniformly.
-    public int MouseRevealRadiusPixels { get; set; } = 40;
-    public int MouseFeatherRadiusPixels { get; set; } = 72;
+    // Mouse cells are collected into one stroke. When the stroke ends, every
+    // touched square receives the same expiry time and therefore fades together.
+    public int MouseRevealRadiusPixels { get; set; } = 120;
     public int MouseRevealHoldMilliseconds { get; set; } = 30_000;
-    public int MouseStrokeIdleMilliseconds { get; set; } = 650;
-    public int MouseHoverRadiusPixels { get; set; } = 8;
-    public int MouseHoverRefreshMilliseconds { get; set; } = 500;
+    public int MouseStrokeIdleMilliseconds { get; set; } = 450;
 
-    // Change detector thresholds. Weak changes need confirmation so tiny rendering
-    // noise does not keep isolated pinholes visible.
+    // Content activity reveals only the changed square. A tiny hole-closing pass
+    // fills isolated gaps between active squares without creating large halos.
+    public int ContentRevealHoldMilliseconds { get; set; } = 30_000;
+    public int HoleFillNeighbourCount { get; set; } = 3;
+
     public double DifferenceThreshold { get; set; } = 3.0;
-    public double ChangedSampleFraction { get; set; } = 0.10;
-    public double StrongDifferenceThreshold { get; set; } = 9.0;
-    public double StrongChangedSampleFraction { get; set; } = 0.24;
-    public int WeakChangeConfirmationSamples { get; set; } = 2;
+    public double ChangedSampleFraction { get; set; } = 0.04;
+    public byte MinimumLuminanceToMask { get; set; } = 3;
 
     public bool StartWithWindows { get; set; }
 
@@ -63,31 +49,24 @@ public sealed class AppSettings
             return;
         }
 
-        // v5 replaces circular islands and time-staggered mouse trails with
-        // rectangular activity components, a compact micro-change mask and one
-        // common expiry for each continuous mouse stroke.
-        CellSizePixels = 32;
-        SamplesPerCell = 3;
-        VisibleSamplingMilliseconds = 1000;
+        // v6 deliberately returns to the original square-pixel visual model.
+        // It keeps only the useful later improvement: a mouse stroke expires as
+        // one group, so the path darkens uniformly rather than as a trailing wave.
+        StaticDelaySeconds = 30;
+        CellSizePixels = 48;
+        SamplesPerCell = 4;
+        VisibleSamplingMilliseconds = 500;
         MaskedSamplingMilliseconds = 250;
-        DarkenFadeMilliseconds = 5000;
-        RevealFadeMilliseconds = 140;
-        ContentFeatherRadiusPixels = 72;
-        MicroFeatherRadiusPixels = 18;
-        ContentActivationPaddingCells = 0;
-        ContentMergeGapCells = 2;
-        MicroChangeMaxCells = 3;
-        MouseRevealRadiusPixels = 40;
-        MouseFeatherRadiusPixels = 72;
+        DarkenFadeMilliseconds = 1200;
+        RevealFadeMilliseconds = 120;
+        MouseRevealRadiusPixels = 120;
         MouseRevealHoldMilliseconds = 30_000;
-        MouseStrokeIdleMilliseconds = 650;
-        MouseHoverRadiusPixels = 8;
-        MouseHoverRefreshMilliseconds = 500;
+        MouseStrokeIdleMilliseconds = 450;
+        ContentRevealHoldMilliseconds = 30_000;
+        HoleFillNeighbourCount = 3;
         DifferenceThreshold = 3.0;
-        ChangedSampleFraction = 0.10;
-        StrongDifferenceThreshold = 9.0;
-        StrongChangedSampleFraction = 0.24;
-        WeakChangeConfirmationSamples = 2;
+        ChangedSampleFraction = 0.04;
+        MinimumLuminanceToMask = 3;
         SchemaVersion = CurrentSchemaVersion;
     }
 
@@ -95,28 +74,20 @@ public sealed class AppSettings
     {
         SchemaVersion = CurrentSchemaVersion;
         StaticDelaySeconds = Math.Clamp(StaticDelaySeconds, 5, 600);
-        CellSizePixels = Math.Clamp(CellSizePixels, 20, 96);
-        SamplesPerCell = Math.Clamp(SamplesPerCell, 2, 6);
-        VisibleSamplingMilliseconds = Math.Clamp(VisibleSamplingMilliseconds, 250, 10_000);
+        CellSizePixels = Math.Clamp(CellSizePixels, 24, 96);
+        SamplesPerCell = Math.Clamp(SamplesPerCell, 2, 8);
+        VisibleSamplingMilliseconds = Math.Clamp(VisibleSamplingMilliseconds, 200, 10_000);
         MaskedSamplingMilliseconds = Math.Clamp(MaskedSamplingMilliseconds, 100, 5_000);
-        DarkenFadeMilliseconds = Math.Clamp(DarkenFadeMilliseconds, 500, 15_000);
+        DarkenFadeMilliseconds = Math.Clamp(DarkenFadeMilliseconds, 200, 10_000);
         RevealFadeMilliseconds = Math.Clamp(RevealFadeMilliseconds, 40, 2_000);
-        ContentFeatherRadiusPixels = Math.Clamp(ContentFeatherRadiusPixels, 16, 240);
-        MicroFeatherRadiusPixels = Math.Clamp(MicroFeatherRadiusPixels, 0, 96);
-        ContentActivationPaddingCells = Math.Clamp(ContentActivationPaddingCells, 0, 3);
-        ContentMergeGapCells = Math.Clamp(ContentMergeGapCells, 1, 4);
-        MicroChangeMaxCells = Math.Clamp(MicroChangeMaxCells, 1, 4);
-        MouseRevealRadiusPixels = Math.Clamp(MouseRevealRadiusPixels, 0, 200);
-        MouseFeatherRadiusPixels = Math.Clamp(MouseFeatherRadiusPixels, 16, 240);
+        MouseRevealRadiusPixels = Math.Clamp(MouseRevealRadiusPixels, 24, 400);
         MouseRevealHoldMilliseconds = Math.Clamp(MouseRevealHoldMilliseconds, 0, 120_000);
-        MouseStrokeIdleMilliseconds = Math.Clamp(MouseStrokeIdleMilliseconds, 150, 3_000);
-        MouseHoverRadiusPixels = Math.Clamp(MouseHoverRadiusPixels, 0, 96);
-        MouseHoverRefreshMilliseconds = Math.Clamp(MouseHoverRefreshMilliseconds, 100, 2_000);
+        MouseStrokeIdleMilliseconds = Math.Clamp(MouseStrokeIdleMilliseconds, 150, 2_000);
+        ContentRevealHoldMilliseconds = Math.Clamp(ContentRevealHoldMilliseconds, 0, 120_000);
+        HoleFillNeighbourCount = Math.Clamp(HoleFillNeighbourCount, 2, 8);
         DifferenceThreshold = Math.Clamp(DifferenceThreshold, 0.5, 50.0);
         ChangedSampleFraction = Math.Clamp(ChangedSampleFraction, 0.01, 1.0);
-        StrongDifferenceThreshold = Math.Clamp(StrongDifferenceThreshold, DifferenceThreshold, 100.0);
-        StrongChangedSampleFraction = Math.Clamp(StrongChangedSampleFraction, ChangedSampleFraction, 1.0);
-        WeakChangeConfirmationSamples = Math.Clamp(WeakChangeConfirmationSamples, 1, 5);
+        MinimumLuminanceToMask = (byte)Math.Clamp(MinimumLuminanceToMask, (byte)0, (byte)40);
     }
 }
 

@@ -1,19 +1,17 @@
 using System.Windows;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using WpfImage = System.Windows.Controls.Image;
 
 namespace OledGuard;
 
 /// <summary>
-/// Renders the protection map as a tiny alpha bitmap stretched over the monitor.
-/// The bitmap stays small (roughly one pixel per 16 screen pixels), and WPF lets
-/// the GPU scale it smoothly instead of drawing thousands of visible rectangles.
+/// Draws a crisp square grid with temporal alpha fades. There is deliberately
+/// no bitmap interpolation or spatial blur: this recreates the clean original
+/// OledGuard look while keeping the cells smaller.
 /// </summary>
-internal sealed class MaskSurface : WpfImage
+internal sealed class MaskSurface : FrameworkElement
 {
-    private WriteableBitmap? _bitmap;
-    private byte[] _pixels = Array.Empty<byte>();
+    private readonly SolidColorBrush[] _brushes;
+    private float[] _alpha = Array.Empty<float>();
     private int _columns;
     private int _rows;
 
@@ -21,59 +19,92 @@ internal sealed class MaskSurface : WpfImage
     {
         IsHitTestVisible = false;
         SnapsToDevicePixels = true;
-        Stretch = Stretch.Fill;
-        HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
-        VerticalAlignment = System.Windows.VerticalAlignment.Stretch;
-        RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.Linear);
-        RenderOptions.SetEdgeMode(this, EdgeMode.Unspecified);
+        UseLayoutRounding = true;
+
+        // 65 cached alpha levels make the fade smooth without allocating brushes
+        // every frame. The grid itself remains perfectly square.
+        _brushes = new SolidColorBrush[65];
+        for (var i = 0; i < _brushes.Length; i++)
+        {
+            var alpha = (byte)Math.Round(i * 255.0 / (_brushes.Length - 1));
+            var brush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(alpha, 0, 0, 0));
+            brush.Freeze();
+            _brushes[i] = brush;
+        }
     }
 
     public void UpdateMask(float[] alpha, int columns, int rows)
     {
-        if (columns <= 0 || rows <= 0 || alpha.Length != columns * rows)
-        {
-            Source = null;
-            return;
-        }
-
-        EnsureBitmap(columns, rows);
-
-        for (var index = 0; index < alpha.Length; index++)
-        {
-            var pixelOffset = index * 4;
-            _pixels[pixelOffset] = 0;
-            _pixels[pixelOffset + 1] = 0;
-            _pixels[pixelOffset + 2] = 0;
-            _pixels[pixelOffset + 3] = (byte)Math.Clamp(
-                (int)MathF.Round(alpha[index] * 255f),
-                0,
-                255);
-        }
-
-        _bitmap!.WritePixels(
-            new Int32Rect(0, 0, columns, rows),
-            _pixels,
-            columns * 4,
-            0);
-    }
-
-    private void EnsureBitmap(int columns, int rows)
-    {
-        if (_bitmap is not null && _columns == columns && _rows == rows)
-        {
-            return;
-        }
-
+        _alpha = alpha;
         _columns = columns;
         _rows = rows;
-        _pixels = new byte[checked(columns * rows * 4)];
-        _bitmap = new WriteableBitmap(
-            columns,
-            rows,
-            96,
-            96,
-            PixelFormats.Pbgra32,
-            null);
-        Source = _bitmap;
+        InvalidateVisual();
+    }
+
+    protected override void OnRender(DrawingContext drawingContext)
+    {
+        base.OnRender(drawingContext);
+
+        if (_columns <= 0 || _rows <= 0 ||
+            _alpha.Length != _columns * _rows ||
+            ActualWidth <= 0 || ActualHeight <= 0)
+        {
+            return;
+        }
+
+        var cellWidth = ActualWidth / _columns;
+        var cellHeight = ActualHeight / _rows;
+
+        for (var row = 0; row < _rows; row++)
+        {
+            var top = row * cellHeight;
+            var bottom = row == _rows - 1 ? ActualHeight : (row + 1) * cellHeight;
+            var column = 0;
+
+            // Merge adjacent squares with the same alpha into one horizontal run.
+            // This reduces draw calls while preserving crisp square boundaries.
+            while (column < _columns)
+            {
+                var brushIndex = GetBrushIndex(_alpha[row * _columns + column]);
+                if (brushIndex == 0)
+                {
+                    column++;
+                    continue;
+                }
+
+                var runStart = column;
+                column++;
+                while (column < _columns &&
+                       GetBrushIndex(_alpha[row * _columns + column]) == brushIndex)
+                {
+                    column++;
+                }
+
+                var left = runStart * cellWidth;
+                var right = column == _columns ? ActualWidth : column * cellWidth;
+
+                // Small overlap prevents bright hairline gaps at non-integer DPI.
+                var rectangle = new Rect(
+                    left - 0.4,
+                    top - 0.4,
+                    (right - left) + 0.8,
+                    (bottom - top) + 0.8);
+
+                drawingContext.DrawRectangle(_brushes[brushIndex], null, rectangle);
+            }
+        }
+    }
+
+    private int GetBrushIndex(float value)
+    {
+        if (value <= 0.005f)
+        {
+            return 0;
+        }
+
+        return Math.Clamp(
+            (int)MathF.Round(value * (_brushes.Length - 1)),
+            1,
+            _brushes.Length - 1);
     }
 }
