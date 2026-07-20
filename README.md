@@ -1,56 +1,55 @@
-# OledGuard 0.7.0
+# OledGuard V1
 
-OledGuard protège un écran OLED sous Windows en rendant noir profond ce qui n’est plus utilisé, tout en conservant visibles les zones réellement actives.
+OledGuard V1 garde l’écran noir profond par défaut et révèle uniquement ce qui est utile : la zone réellement active de la fenêtre au premier plan, ainsi qu’un petit carré autour de la souris.
 
 ## Comportement
 
-Cette version repart du moteur 0.4 et conserve son principe de zone active, avec un rendu plus net :
+- Quand une fenêtre passe au premier plan, elle est brièvement révélée.
+- Ensuite, seules les zones qui changent réellement restent visibles.
+- Les parties ultra-statiques de cette fenêtre retournent progressivement au noir après le délai choisi.
+- Les changements de fond, derrière la fenêtre active, restent noirs.
+- La souris peut découvrir n’importe quelle zone noire sans déplacer le focus.
+- Les micro-animations isolées, comme un petit point clignotant, sont ignorées par défaut.
+- Un balayage noir périodique traverse les zones encore visibles afin d’offrir une courte pause aux pixels qui restent actifs en continu.
 
-- petites zones carrées de 24 px par défaut ;
-- centre visible, puis plusieurs niveaux nets de sombre jusqu’au noir profond ;
-- aucun flou bilinéaire ni grand halo rond ;
-- distance carrée autour des activités ;
-- passage de la souris maintenu visible 30 secondes ;
-- retour temporel progressif au noir ;
-- une modification réelle réaffiche immédiatement la zone ;
-- les micro-animations isolées, comme un seul point qui clignote, sont ignorées par défaut.
+Le dégradé est monochrome et carré : visible, sombre, très sombre, noir. Il n’ajoute aucune couleur ni luminosité.
 
 ## Réglages conseillés
 
-- durée visible après activité : **30 s** ;
-- taille des carrés : **24 px** ;
-- filtre micro-animation : **2 cellules voisines minimum** ;
-- zone nette : **24 px** ;
-- transition carrée : **72 px** ;
-- carré révélé autour de la souris : **72 px** ;
-- retour au noir : **2,6 s**.
+- noir après activité : **30 s** ;
+- révélation d’une nouvelle fenêtre : **5 s** ;
+- précision : **24 px** ;
+- filtre micro-animation : **2 cellules** ;
+- centre visible : **1 cellule** ;
+- dégradé : **5 cellules / 7 niveaux** ;
+- souris : **48 px + 4 cellules de dégradé** ;
+- maintien souris : **30 s** ;
+- balayage de repos : **toutes les 120 s, pendant 7 s**.
 
-Le filtre micro-animation peut être réglé à 1 pour afficher les changements minuscules, ou augmenté à 3/4 si une interface contient beaucoup de petits indicateurs clignotants.
+## Raccourcis
 
-## Commandes
-
-- double-clic sur l’icône : activer ou désactiver ;
-- `Ctrl + Alt + O` : activer ou désactiver (`o` et `O` sont identiques) ;
+- `Ctrl + Alt + O` : activer ou désactiver ;
 - `Ctrl + Alt + R` : révéler tout pendant 10 secondes ;
-- clic droit sur l’icône : délai, paramètres et fermeture.
+- double-clic sur l’icône : activer ou désactiver ;
+- clic droit sur l’icône : paramètres et fermeture.
 
-## Consommation
+## Mémoire et performances
 
-Pour un écran 4K avec des cellules de 24 px :
+OledGuard ne conserve aucune image 4K complète :
 
-- environ 160 × 90 cellules ;
-- quatre échantillons par axe et par cellule ;
+- capture réduite à quelques centaines de pixels ;
+- une seule image précédente réduite ;
+- carte alpha de quelques milliers de cellules ;
 - aucun historique vidéo ;
 - buffers réutilisés ;
-- masque alpha minuscule agrandi par le compositeur Windows ;
-- détection généralement toutes les 250 ms lorsque le masque est actif.
+- rendu mis à jour uniquement lorsqu’un fondu, une activité ou un balayage le nécessite.
 
-La mémoire des cartes de travail reste très faible. OledGuard ne conserve pas de capture 4K complète.
+À 3840 × 2160 avec des cellules de 24 px, les données propres à OledGuard représentent seulement quelques mégaoctets. Le compositeur Windows réserve également une surface transparente plein écran ; la cible est **moins de 100 Mo pour un écran 4K**, mais la valeur exacte dépend du pilote, de Windows et du nombre de moniteurs.
 
-## Compilation avec GitHub Actions
+## Compilation
 
-Chaque push sur `main` lance **Build Windows executable**. Quand le workflow est vert, télécharger l’artifact `OledGuard-win-x64`, le décompresser puis lancer `OledGuard.exe`.
+Chaque push sur `main` lance le workflow **Build Windows executable**. Quand il est vert, télécharger l’artifact `OledGuard-win-x64`, le décompresser et lancer `OledGuard.exe`.
 
-## Limite
+## Important
 
-OledGuard réduit l’exposition des zones statiques mais ne garantit pas l’absence totale de marquage. Conserver les protections intégrées de la dalle, une luminosité raisonnable et l’extinction automatique de l’écran.
+Le « balayage de repos » ne répare pas physiquement une dalle. Il réduit temporairement l’émission lumineuse de pixels actifs. OledGuard complète les protections de l’écran ; il ne garantit pas l’absence totale de marquage.

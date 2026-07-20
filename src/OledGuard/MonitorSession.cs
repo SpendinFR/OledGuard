@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Drawing;
 using System.Windows.Threading;
 using FormsScreen = System.Windows.Forms.Screen;
 
@@ -6,6 +7,9 @@ namespace OledGuard;
 
 internal sealed class MonitorSession : IDisposable
 {
+    private const int InfiniteDistance = 1_000_000;
+    private const int RestFadeMilliseconds = 650;
+
     private enum ChangeKind
     {
         None,
@@ -15,10 +19,12 @@ internal sealed class MonitorSession : IDisposable
 
     private sealed class Cell
     {
-        public long ActiveUntilTicks;
+        public long ContentActiveUntilTicks;
+        public long MouseActiveUntilTicks;
         public float Alpha;
         public float TargetAlpha;
         public byte WeakChangeStreak;
+        public bool Resting;
     }
 
     private readonly FormsScreen _screen;
@@ -32,17 +38,16 @@ internal sealed class MonitorSession : IDisposable
     private readonly int _sampleWidth;
     private readonly int _sampleHeight;
     private readonly int _sampleStride;
-    private readonly int _renderColumns;
-    private readonly int _renderRows;
     private readonly byte[] _previous;
     private readonly bool[] _changedCells;
     private readonly bool[] _strongChangedCells;
-    private readonly bool[] _visitedChanges;
+    private readonly bool[] _visitedCells;
+    private readonly bool[] _foregroundCells;
+    private readonly bool[] _contentActiveCells;
+    private readonly bool[] _mouseActiveCells;
+    private readonly int[] _contentDistance;
+    private readonly int[] _mouseDistance;
     private readonly int[] _componentQueue;
-    private readonly bool[] _activeCells;
-    private readonly bool[] _closedActiveCells;
-    private readonly float[] _distance;
-    private readonly float[] _cellAlpha;
     private readonly float[] _renderAlpha;
     private readonly object _sync = new();
     private readonly DispatcherTimer _animationTimer;
@@ -53,8 +58,17 @@ internal sealed class MonitorSession : IDisposable
     private bool _enabled;
     private bool _maskDirty;
     private long _revealAllUntilTicks;
+    private long _windowRevealUntilTicks;
+    private long _restEpochTicks;
     private long _lastAnimationTicks;
     private bool _disposed;
+
+    private bool _hasForeground;
+    private ForegroundWindowInfo _foreground;
+    private int _foregroundMinColumn;
+    private int _foregroundMaxColumn;
+    private int _foregroundMinRow;
+    private int _foregroundMaxRow;
 
     public MonitorSession(FormsScreen screen, AppSettings settings)
     {
@@ -69,23 +83,19 @@ internal sealed class MonitorSession : IDisposable
         _sampleHeight = _rows * _samplesPerCell;
         _sampleStride = _sampleWidth * 4;
 
-        // Render directly from the compact activity grid. Nearest-neighbour scaling
-        // keeps the shapes crisp and square; temporal alpha still fades smoothly.
-        _renderColumns = _columns;
-        _renderRows = _rows;
-
         var cellCount = checked(_columns * _rows);
         _previous = new byte[checked(_sampleStride * _sampleHeight)];
         _cells = Enumerable.Range(0, cellCount).Select(_ => new Cell()).ToArray();
         _changedCells = new bool[cellCount];
         _strongChangedCells = new bool[cellCount];
-        _visitedChanges = new bool[cellCount];
+        _visitedCells = new bool[cellCount];
+        _foregroundCells = new bool[cellCount];
+        _contentActiveCells = new bool[cellCount];
+        _mouseActiveCells = new bool[cellCount];
+        _contentDistance = new int[cellCount];
+        _mouseDistance = new int[cellCount];
         _componentQueue = new int[cellCount];
-        _activeCells = new bool[cellCount];
-        _closedActiveCells = new bool[cellCount];
-        _distance = new float[cellCount];
-        _cellAlpha = new float[cellCount];
-        _renderAlpha = new float[checked(_renderColumns * _renderRows)];
+        _renderAlpha = new float[cellCount];
 
         _overlay = new OverlayWindow(screen);
         _sampler = new ScreenSampler(bounds, _sampleWidth, _sampleHeight);
@@ -113,14 +123,20 @@ internal sealed class MonitorSession : IDisposable
         {
             _enabled = enabled;
             var now = Stopwatch.GetTimestamp();
-            var initialUntil = now + ToStopwatchTicks(_settings.StaticDelaySeconds * 1000.0);
+            _restEpochTicks = now;
+            _revealAllUntilTicks = 0;
+            _windowRevealUntilTicks = 0;
+            _hasForeground = false;
+            _hasPrevious = false;
 
             foreach (var cell in _cells)
             {
-                cell.ActiveUntilTicks = enabled ? initialUntil : now;
+                cell.ContentActiveUntilTicks = 0;
+                cell.MouseActiveUntilTicks = 0;
                 cell.WeakChangeStreak = 0;
-                cell.TargetAlpha = 0;
-                cell.Alpha = 0;
+                cell.Resting = false;
+                cell.TargetAlpha = 0f;
+                cell.Alpha = 0f;
             }
 
             _maskDirty = true;
@@ -227,21 +243,7 @@ internal sealed class MonitorSession : IDisposable
                 }
             }
 
-            FilterSmallChangeClusters();
-
-            var anyChanged = false;
-            for (var index = 0; index < _changedCells.Length; index++)
-            {
-                if (!_changedCells[index])
-                {
-                    continue;
-                }
-
-                anyChanged = true;
-                ActivateChangedArea(index / _columns, index % _columns, now);
-            }
-
-            if (anyChanged)
+            if (ActivateMeaningfulChangeComponents(now))
             {
                 _maskDirty = true;
             }
@@ -258,6 +260,7 @@ internal sealed class MonitorSession : IDisposable
         var strongSamples = 0;
         var sampleCount = _samplesPerCell * _samplesPerCell;
         double differenceTotal = 0;
+        double maximumDifference = 0;
 
         for (var y = 0; y < _samplesPerCell; y++)
         {
@@ -271,6 +274,7 @@ internal sealed class MonitorSession : IDisposable
                     Math.Abs(current[offset + 2] - _previous[offset + 2])) / 3.0;
 
                 differenceTotal += difference;
+                maximumDifference = Math.Max(maximumDifference, difference);
 
                 if (difference >= _settings.DifferenceThreshold)
                 {
@@ -284,19 +288,12 @@ internal sealed class MonitorSession : IDisposable
             }
         }
 
-        // A blinking point or a one-sample rendering fluctuation must not open a
-        // large visible island. It is ignored before temporal confirmation.
-        if (changedSamples < _settings.MinimumChangedSamplesPerCell &&
-            strongSamples < _settings.MinimumChangedSamplesPerCell)
-        {
-            return ChangeKind.None;
-        }
-
         var meanDifference = differenceTotal / sampleCount;
         var changedFraction = changedSamples / (double)sampleCount;
         var strongFraction = strongSamples / (double)sampleCount;
 
-        if (meanDifference >= _settings.StrongDifferenceThreshold ||
+        if (maximumDifference >= _settings.StrongDifferenceThreshold * 1.8 ||
+            meanDifference >= _settings.StrongDifferenceThreshold ||
             strongFraction >= _settings.StrongChangedSampleFraction)
         {
             return ChangeKind.Strong;
@@ -311,93 +308,100 @@ internal sealed class MonitorSession : IDisposable
         return ChangeKind.None;
     }
 
-    private void FilterSmallChangeClusters()
+    private bool ActivateMeaningfulChangeComponents(long now)
     {
-        Array.Clear(_visitedChanges, 0, _visitedChanges.Length);
-        var minimumCells = _settings.MinimumActivityClusterCells;
+        Array.Clear(_visitedCells, 0, _visitedCells.Length);
+        var anyAccepted = false;
 
         for (var startIndex = 0; startIndex < _changedCells.Length; startIndex++)
         {
-            if (!_changedCells[startIndex] || _visitedChanges[startIndex])
+            if (!_changedCells[startIndex] || _visitedCells[startIndex] || !_foregroundCells[startIndex])
             {
                 continue;
             }
 
-            var head = 0;
-            var tail = 0;
-            var hasStrongCell = false;
-            _componentQueue[tail++] = startIndex;
-            _visitedChanges[startIndex] = true;
+            var queueRead = 0;
+            var queueWrite = 0;
+            _componentQueue[queueWrite++] = startIndex;
+            _visitedCells[startIndex] = true;
 
-            while (head < tail)
+            var count = 0;
+            var strongCount = 0;
+            var minRow = _rows;
+            var maxRow = 0;
+            var minColumn = _columns;
+            var maxColumn = 0;
+
+            while (queueRead < queueWrite)
             {
-                var index = _componentQueue[head++];
-                hasStrongCell |= _strongChangedCells[index];
+                var index = _componentQueue[queueRead++];
                 var row = index / _columns;
                 var column = index % _columns;
 
-                for (var offsetY = -1; offsetY <= 1; offsetY++)
+                count++;
+                if (_strongChangedCells[index])
                 {
-                    var y = row + offsetY;
-                    if (y < 0 || y >= _rows)
-                    {
-                        continue;
-                    }
+                    strongCount++;
+                }
 
-                    for (var offsetX = -1; offsetX <= 1; offsetX++)
+                minRow = Math.Min(minRow, row);
+                maxRow = Math.Max(maxRow, row);
+                minColumn = Math.Min(minColumn, column);
+                maxColumn = Math.Max(maxColumn, column);
+
+                for (var neighborRow = Math.Max(0, row - 1); neighborRow <= Math.Min(_rows - 1, row + 1); neighborRow++)
+                {
+                    for (var neighborColumn = Math.Max(0, column - 1); neighborColumn <= Math.Min(_columns - 1, column + 1); neighborColumn++)
                     {
-                        if (offsetX == 0 && offsetY == 0)
+                        var neighborIndex = neighborRow * _columns + neighborColumn;
+                        if (_visitedCells[neighborIndex] || !_changedCells[neighborIndex] || !_foregroundCells[neighborIndex])
                         {
                             continue;
                         }
 
-                        var x = column + offsetX;
-                        if (x < 0 || x >= _columns)
-                        {
-                            continue;
-                        }
-
-                        var neighbour = y * _columns + x;
-                        if (_changedCells[neighbour] && !_visitedChanges[neighbour])
-                        {
-                            _visitedChanges[neighbour] = true;
-                            _componentQueue[tail++] = neighbour;
-                        }
+                        _visitedCells[neighborIndex] = true;
+                        _componentQueue[queueWrite++] = neighborIndex;
                     }
                 }
             }
 
-            // Isolated micro-components are deliberately ignored. A genuinely
-            // useful update normally changes neighbouring cells; mouse activity
-            // still reveals tiny controls when the user actually interacts.
-            var keep = tail >= minimumCells;
-            if (!keep && hasStrongCell && minimumCells <= 1)
+            // A single blinking point is deliberately ignored, even if bright. A
+            // tiny two-cell component is accepted when at least one cell is strong.
+            var accepted = count >= _settings.MinimumActivityComponentCells &&
+                (count > _settings.MinimumActivityComponentCells || strongCount > 0 || count >= 3);
+            if (!accepted)
             {
-                keep = true;
+                continue;
             }
 
-            if (!keep)
-            {
-                for (var i = 0; i < tail; i++)
-                {
-                    _changedCells[_componentQueue[i]] = false;
-                    _strongChangedCells[_componentQueue[i]] = false;
-                }
-            }
+            ActivateContentRectangle(minRow, maxRow, minColumn, maxColumn, now);
+            anyAccepted = true;
         }
+
+        return anyAccepted;
     }
 
-    private void ActivateChangedArea(int row, int column, long now)
+    private void ActivateContentRectangle(int minRow, int maxRow, int minColumn, int maxColumn, long now)
     {
         var padding = _settings.ContentActivationPaddingCells;
-        var activeUntil = now + ToStopwatchTicks(_settings.StaticDelaySeconds * 1000.0);
+        minRow = Math.Max(0, minRow - padding);
+        maxRow = Math.Min(_rows - 1, maxRow + padding);
+        minColumn = Math.Max(0, minColumn - padding);
+        maxColumn = Math.Min(_columns - 1, maxColumn + padding);
 
-        for (var y = Math.Max(0, row - padding); y <= Math.Min(_rows - 1, row + padding); y++)
+        var activeUntil = now + ToStopwatchTicks(_settings.StaticDelaySeconds * 1000.0);
+        for (var row = minRow; row <= maxRow; row++)
         {
-            for (var x = Math.Max(0, column - padding); x <= Math.Min(_columns - 1, column + padding); x++)
+            for (var column = minColumn; column <= maxColumn; column++)
             {
-                var cell = _cells[y * _columns + x];
-                cell.ActiveUntilTicks = Math.Max(cell.ActiveUntilTicks, activeUntil);
+                var index = row * _columns + column;
+                if (!_foregroundCells[index])
+                {
+                    continue;
+                }
+
+                var cell = _cells[index];
+                cell.ContentActiveUntilTicks = Math.Max(cell.ContentActiveUntilTicks, activeUntil);
                 cell.WeakChangeStreak = 0;
             }
         }
@@ -414,6 +418,7 @@ internal sealed class MonitorSession : IDisposable
         NativeMethods.GetCursorPos(out var cursor);
         var changed = false;
         var anyAnimating = false;
+        var restCycleActive = false;
         var bounds = _screen.Bounds;
 
         lock (_sync)
@@ -424,8 +429,9 @@ internal sealed class MonitorSession : IDisposable
                 return;
             }
 
+            UpdateForegroundWindow(bounds, now);
             ApplyMouseActivity(cursor, bounds, now);
-            BuildSpatialTargets(now);
+            restCycleActive = BuildTargets(now);
 
             changed = _maskDirty;
             _maskDirty = false;
@@ -441,7 +447,10 @@ internal sealed class MonitorSession : IDisposable
                 }
                 else if (cell.TargetAlpha > cell.Alpha)
                 {
-                    var step = (float)(elapsedMs / Math.Max(1, _settings.DarkenFadeMilliseconds));
+                    var fadeDuration = cell.Resting
+                        ? Math.Min(_settings.DarkenFadeMilliseconds, RestFadeMilliseconds)
+                        : _settings.DarkenFadeMilliseconds;
+                    var step = (float)(elapsedMs / Math.Max(1, fadeDuration));
                     cell.Alpha = Math.Min(cell.TargetAlpha, cell.Alpha + step);
                 }
 
@@ -457,7 +466,7 @@ internal sealed class MonitorSession : IDisposable
             }
         }
 
-        _animationTimer.Interval = TimeSpan.FromMilliseconds(anyAnimating ? 33 : 50);
+        _animationTimer.Interval = TimeSpan.FromMilliseconds(anyAnimating || restCycleActive ? 33 : 80);
 
         if (changed)
         {
@@ -465,138 +474,173 @@ internal sealed class MonitorSession : IDisposable
         }
     }
 
-    private void ApplyMouseActivity(NativeMethods.Point cursor, System.Drawing.Rectangle bounds, long now)
+    private void UpdateForegroundWindow(Rectangle screenBounds, long now)
+    {
+        if (!ForegroundWindowInfo.TryGetForScreen(screenBounds, out var current))
+        {
+            if (_hasForeground)
+            {
+                _hasForeground = false;
+                _windowRevealUntilTicks = 0;
+                ClearContentActivity();
+                _maskDirty = true;
+            }
+
+            Array.Clear(_foregroundCells, 0, _foregroundCells.Length);
+            return;
+        }
+
+        var changedWindow = !_hasForeground || current.Handle != _foreground.Handle;
+        var changedBounds = !_hasForeground || RectanglesDiffer(current.Bounds, _foreground.Bounds, 4);
+
+        if (changedWindow || changedBounds)
+        {
+            ClearContentActivity();
+            _windowRevealUntilTicks = now + ToStopwatchTicks(_settings.WindowRevealSeconds * 1000.0);
+            _maskDirty = true;
+        }
+
+        _foreground = current;
+        _hasForeground = true;
+        UpdateForegroundCells(screenBounds);
+    }
+
+    private void ClearContentActivity()
+    {
+        foreach (var cell in _cells)
+        {
+            cell.ContentActiveUntilTicks = 0;
+            cell.WeakChangeStreak = 0;
+        }
+    }
+
+    private void UpdateForegroundCells(Rectangle screenBounds)
+    {
+        Array.Clear(_foregroundCells, 0, _foregroundCells.Length);
+        _foregroundMinColumn = _columns;
+        _foregroundMaxColumn = -1;
+        _foregroundMinRow = _rows;
+        _foregroundMaxRow = -1;
+
+        if (!_hasForeground)
+        {
+            return;
+        }
+
+        for (var row = 0; row < _rows; row++)
+        {
+            var cellTop = screenBounds.Top + row * screenBounds.Height / _rows;
+            var cellBottom = screenBounds.Top + (row + 1) * screenBounds.Height / _rows;
+
+            for (var column = 0; column < _columns; column++)
+            {
+                var cellLeft = screenBounds.Left + column * screenBounds.Width / _columns;
+                var cellRight = screenBounds.Left + (column + 1) * screenBounds.Width / _columns;
+                var cellBounds = Rectangle.FromLTRB(cellLeft, cellTop, cellRight, cellBottom);
+                if (!cellBounds.IntersectsWith(_foreground.Bounds))
+                {
+                    continue;
+                }
+
+                var index = row * _columns + column;
+                _foregroundCells[index] = true;
+                _foregroundMinColumn = Math.Min(_foregroundMinColumn, column);
+                _foregroundMaxColumn = Math.Max(_foregroundMaxColumn, column);
+                _foregroundMinRow = Math.Min(_foregroundMinRow, row);
+                _foregroundMaxRow = Math.Max(_foregroundMaxRow, row);
+            }
+        }
+    }
+
+    private void ApplyMouseActivity(NativeMethods.Point cursor, Rectangle bounds, long now)
     {
         if (!bounds.Contains(cursor.X, cursor.Y))
         {
             return;
         }
 
-        var radius = _settings.MouseRevealRadiusPixels;
-        var left = cursor.X - radius;
-        var right = cursor.X + radius;
-        var top = cursor.Y - radius;
-        var bottom = cursor.Y + radius;
-        var firstColumn = Math.Clamp((left - bounds.Left) * _columns / Math.Max(1, bounds.Width), 0, _columns - 1);
-        var lastColumn = Math.Clamp((right - bounds.Left) * _columns / Math.Max(1, bounds.Width), 0, _columns - 1);
-        var firstRow = Math.Clamp((top - bounds.Top) * _rows / Math.Max(1, bounds.Height), 0, _rows - 1);
-        var lastRow = Math.Clamp((bottom - bounds.Top) * _rows / Math.Max(1, bounds.Height), 0, _rows - 1);
+        var centerColumn = Math.Clamp((cursor.X - bounds.Left) * _columns / Math.Max(1, bounds.Width), 0, _columns - 1);
+        var centerRow = Math.Clamp((cursor.Y - bounds.Top) * _rows / Math.Max(1, bounds.Height), 0, _rows - 1);
+        var coreCells = Math.Max(0, (int)Math.Ceiling(_settings.MouseCoreRadiusPixels / (double)_settings.CellSizePixels));
         var activeUntil = now + ToStopwatchTicks(_settings.MouseRevealHoldMilliseconds);
 
-        for (var row = firstRow; row <= lastRow; row++)
+        for (var row = Math.Max(0, centerRow - coreCells); row <= Math.Min(_rows - 1, centerRow + coreCells); row++)
         {
-            for (var column = firstColumn; column <= lastColumn; column++)
+            for (var column = Math.Max(0, centerColumn - coreCells); column <= Math.Min(_columns - 1, centerColumn + coreCells); column++)
             {
                 var cell = _cells[row * _columns + column];
-                cell.ActiveUntilTicks = Math.Max(cell.ActiveUntilTicks, activeUntil);
+                cell.MouseActiveUntilTicks = Math.Max(cell.MouseActiveUntilTicks, activeUntil);
             }
         }
     }
 
-    private void BuildSpatialTargets(long now)
+    private bool BuildTargets(long now)
     {
         var revealEverything = now < _revealAllUntilTicks;
+        var revealWindow = _hasForeground && now < _windowRevealUntilTicks;
 
         for (var index = 0; index < _cells.Length; index++)
         {
-            _activeCells[index] = revealEverything || now < _cells[index].ActiveUntilTicks;
+            _contentActiveCells[index] = revealEverything ||
+                (_foregroundCells[index] && (revealWindow || now < _cells[index].ContentActiveUntilTicks));
+            _mouseActiveCells[index] = revealEverything || now < _cells[index].MouseActiveUntilTicks;
         }
 
-        CloseSmallActivityGaps();
-        BuildDistanceField();
+        BuildChebyshevDistance(_contentActiveCells, _contentDistance);
+        BuildChebyshevDistance(_mouseActiveCells, _mouseDistance);
 
-        var core = _settings.ActivityCoreRadiusPixels;
-        var feather = Math.Max(1, _settings.ActivityFeatherRadiusPixels);
-        var cellPixels = Math.Max(1, _settings.CellSizePixels);
-
-        for (var index = 0; index < _cells.Length; index++)
-        {
-            var distancePixels = _distance[index] * cellPixels;
-            float target;
-
-            if (distancePixels <= core)
-            {
-                target = 0f;
-            }
-            else if (distancePixels >= core + feather)
-            {
-                target = 1f;
-            }
-            else
-            {
-                var t = (distancePixels - core) / feather;
-                var smooth = SmoothStep(t);
-                var steps = Math.Max(2, _settings.SpatialFadeSteps);
-                target = MathF.Round(smooth * steps) / steps;
-            }
-
-            if (Math.Abs(_cells[index].TargetAlpha - target) > 0.001f)
-            {
-                _cells[index].TargetAlpha = target;
-                _maskDirty = true;
-            }
-        }
-    }
-
-    private void CloseSmallActivityGaps()
-    {
-        Array.Copy(_activeCells, _closedActiveCells, _activeCells.Length);
-
+        var restCycleActive = TryGetRestSweep(now, out var sweepCenter);
         for (var row = 0; row < _rows; row++)
         {
             for (var column = 0; column < _columns; column++)
             {
                 var index = row * _columns + column;
-                if (_activeCells[index])
+                float contentAlpha = 1f;
+
+                if (revealEverything)
                 {
-                    continue;
+                    contentAlpha = 0f;
+                }
+                else if (_foregroundCells[index])
+                {
+                    contentAlpha = revealWindow
+                        ? 0f
+                        : AlphaFromDistance(
+                            _contentDistance[index],
+                            _settings.ContentCoreCells,
+                            _settings.ContentFeatherCells);
                 }
 
-                var neighbours = 0;
-                for (var offsetY = -1; offsetY <= 1; offsetY++)
+                var mouseAlpha = AlphaFromDistance(
+                    _mouseDistance[index],
+                    0,
+                    _settings.MouseFeatherCells);
+
+                var baseAlpha = Math.Min(contentAlpha, mouseAlpha);
+                var restAlpha = !revealEverything && restCycleActive
+                    ? GetRestAlpha(row, column, sweepCenter, baseAlpha)
+                    : 0f;
+                var target = Math.Max(baseAlpha, restAlpha);
+                var resting = restAlpha > baseAlpha + 0.001f;
+
+                var cell = _cells[index];
+                cell.Resting = resting;
+                if (Math.Abs(cell.TargetAlpha - target) > 0.001f)
                 {
-                    var y = row + offsetY;
-                    if (y < 0 || y >= _rows)
-                    {
-                        continue;
-                    }
-
-                    for (var offsetX = -1; offsetX <= 1; offsetX++)
-                    {
-                        if (offsetX == 0 && offsetY == 0)
-                        {
-                            continue;
-                        }
-
-                        var x = column + offsetX;
-                        if (x >= 0 && x < _columns && _activeCells[y * _columns + x])
-                        {
-                            neighbours++;
-                        }
-                    }
-                }
-
-                var horizontalBridge = column > 0 && column + 1 < _columns &&
-                    _activeCells[index - 1] && _activeCells[index + 1];
-                var verticalBridge = row > 0 && row + 1 < _rows &&
-                    _activeCells[index - _columns] && _activeCells[index + _columns];
-
-                if (neighbours >= 4 || horizontalBridge || verticalBridge)
-                {
-                    _closedActiveCells[index] = true;
+                    cell.TargetAlpha = target;
+                    _maskDirty = true;
                 }
             }
         }
+
+        return restCycleActive;
     }
 
-    private void BuildDistanceField()
+    private void BuildChebyshevDistance(bool[] active, int[] distance)
     {
-        const float infinity = 1_000_000f;
-        const float diagonal = 1f;
-
-        for (var index = 0; index < _distance.Length; index++)
+        for (var index = 0; index < active.Length; index++)
         {
-            _distance[index] = _closedActiveCells[index] ? 0f : infinity;
+            distance[index] = active[index] ? 0 : InfiniteDistance;
         }
 
         for (var row = 0; row < _rows; row++)
@@ -604,26 +648,24 @@ internal sealed class MonitorSession : IDisposable
             for (var column = 0; column < _columns; column++)
             {
                 var index = row * _columns + column;
-                var value = _distance[index];
-
+                var value = distance[index];
                 if (column > 0)
                 {
-                    value = Math.Min(value, _distance[index - 1] + 1f);
+                    value = Math.Min(value, distance[index - 1] + 1);
                 }
                 if (row > 0)
                 {
-                    value = Math.Min(value, _distance[index - _columns] + 1f);
+                    value = Math.Min(value, distance[index - _columns] + 1);
                     if (column > 0)
                     {
-                        value = Math.Min(value, _distance[index - _columns - 1] + diagonal);
+                        value = Math.Min(value, distance[index - _columns - 1] + 1);
                     }
                     if (column + 1 < _columns)
                     {
-                        value = Math.Min(value, _distance[index - _columns + 1] + diagonal);
+                        value = Math.Min(value, distance[index - _columns + 1] + 1);
                     }
                 }
-
-                _distance[index] = value;
+                distance[index] = value;
             }
         }
 
@@ -632,28 +674,101 @@ internal sealed class MonitorSession : IDisposable
             for (var column = _columns - 1; column >= 0; column--)
             {
                 var index = row * _columns + column;
-                var value = _distance[index];
-
+                var value = distance[index];
                 if (column + 1 < _columns)
                 {
-                    value = Math.Min(value, _distance[index + 1] + 1f);
+                    value = Math.Min(value, distance[index + 1] + 1);
                 }
                 if (row + 1 < _rows)
                 {
-                    value = Math.Min(value, _distance[index + _columns] + 1f);
+                    value = Math.Min(value, distance[index + _columns] + 1);
                     if (column > 0)
                     {
-                        value = Math.Min(value, _distance[index + _columns - 1] + diagonal);
+                        value = Math.Min(value, distance[index + _columns - 1] + 1);
                     }
                     if (column + 1 < _columns)
                     {
-                        value = Math.Min(value, _distance[index + _columns + 1] + diagonal);
+                        value = Math.Min(value, distance[index + _columns + 1] + 1);
                     }
                 }
-
-                _distance[index] = value;
+                distance[index] = value;
             }
         }
+    }
+
+    private float AlphaFromDistance(int distance, int coreCells, int featherCells)
+    {
+        if (distance >= InfiniteDistance / 2)
+        {
+            return 1f;
+        }
+
+        if (distance <= coreCells)
+        {
+            return 0f;
+        }
+
+        if (distance >= coreCells + featherCells)
+        {
+            return 1f;
+        }
+
+        var t = (distance - coreCells) / (float)Math.Max(1, featherCells);
+        var smooth = SmoothStep(t);
+        var levels = Math.Max(2, _settings.GradientSteps - 1);
+        return MathF.Round(smooth * levels) / levels;
+    }
+
+    private bool TryGetRestSweep(long now, out float sweepCenter)
+    {
+        sweepCenter = 0;
+        if (!_settings.RestCycleEnabled || !_hasForeground || _foregroundMaxColumn < _foregroundMinColumn)
+        {
+            return false;
+        }
+
+        var elapsedMs = FromStopwatchTicks(now - _restEpochTicks);
+        var intervalMs = _settings.RestCycleIntervalSeconds * 1000.0;
+        if (elapsedMs < intervalMs)
+        {
+            return false;
+        }
+
+        var phaseMs = elapsedMs % intervalMs;
+        if (phaseMs >= _settings.RestCycleDurationMilliseconds)
+        {
+            return false;
+        }
+
+        var progress = (float)(phaseMs / _settings.RestCycleDurationMilliseconds);
+        var band = _settings.RestCycleBandCells;
+        var start = _foregroundMinColumn - band;
+        var end = _foregroundMaxColumn + band;
+        sweepCenter = start + (end - start) * progress;
+        return true;
+    }
+
+    private float GetRestAlpha(int row, int column, float sweepCenter, float baseAlpha)
+    {
+        var index = row * _columns + column;
+        if (!_foregroundCells[index] || baseAlpha >= 0.995f)
+        {
+            return 0f;
+        }
+
+        // A slight diagonal offset gives the monochrome sweep a clean futuristic
+        // look without spatial blur or coloured pixels.
+        var diagonalColumn = column + (row - _foregroundMinRow) * 0.12f;
+        var distance = Math.Abs(diagonalColumn - sweepCenter);
+        var band = Math.Max(1, _settings.RestCycleBandCells);
+        if (distance >= band)
+        {
+            return 0f;
+        }
+
+        var t = 1f - distance / band;
+        var stepped = MathF.Round(SmoothStep(t) * 4f) / 4f;
+        return (float)(_settings.RestCycleStrength * stepped);
     }
 
     private void PushMask()
@@ -663,22 +778,22 @@ internal sealed class MonitorSession : IDisposable
             for (var index = 0; index < _cells.Length; index++)
             {
                 var value = _enabled ? _cells[index].Alpha : 0f;
-                if (value <= 0.003f)
-                {
-                    value = 0f;
-                }
-                else if (value >= 0.997f)
-                {
-                    value = 1f;
-                }
-
-                _cellAlpha[index] = value;
-                _renderAlpha[index] = value;
+                _renderAlpha[index] = value <= 0.003f
+                    ? 0f
+                    : value >= 0.997f
+                        ? 1f
+                        : value;
             }
         }
 
-        _overlay.SetMask(_renderAlpha, _renderColumns, _renderRows);
+        _overlay.SetMask(_renderAlpha, _columns, _rows);
     }
+
+    private static bool RectanglesDiffer(Rectangle left, Rectangle right, int tolerance) =>
+        Math.Abs(left.Left - right.Left) > tolerance ||
+        Math.Abs(left.Top - right.Top) > tolerance ||
+        Math.Abs(left.Right - right.Right) > tolerance ||
+        Math.Abs(left.Bottom - right.Bottom) > tolerance;
 
     private static float SmoothStep(float value)
     {

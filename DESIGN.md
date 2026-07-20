@@ -1,31 +1,54 @@
-# OledGuard 0.7.0 — masque carré net
+# OledGuard V1 — architecture
 
-## Objectif visuel
+## Règle principale
 
-Conserver le comportement utile de la version 0.4, mais remplacer le grand halo arrondi et flou par de petites zones carrées lisibles : centre transparent, quelques niveaux sombres nets, puis noir profond.
+Le noir est l’état par défaut. Deux sources seulement peuvent retirer localement le masque :
 
-## Pipeline
+1. une activité significative située dans la fenêtre au premier plan ;
+2. la zone de découverte autour de la souris.
 
-1. Capture réduite du bureau avec GDI.
-2. Comparaison de 4 × 4 échantillons par cellule de 24 px.
-3. Rejet des changements qui affectent trop peu d’échantillons.
-4. Regroupement des cellules modifiées en composantes voisines.
-5. Suppression des composantes plus petites que le seuil configuré, par défaut deux cellules.
-6. Chaque activité valide reste visible 30 secondes.
-7. Champ de distance de type Chebyshev : les contours grandissent en carrés, pas en cercles.
-8. Conversion de la distance en quatre niveaux d’opacité spatiale.
-9. Agrandissement du masque avec nearest-neighbour, sans flou spatial.
-10. Fondu temporel rapide vers visible et progressif vers noir.
+Les changements derrière la fenêtre au premier plan ne révèlent rien.
 
-## Filtre des petits clignotements
+## Fenêtre au premier plan
 
-Un pixel ou indicateur isolé ne doit pas maintenir une grande zone visible. Deux protections sont combinées :
+`GetForegroundWindow` fournit le handle actif. `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)` fournit ses limites visibles, avec `GetWindowRect` en secours.
 
-- un nombre minimal d’échantillons modifiés dans une cellule ;
-- un nombre minimal de cellules voisines dans une composante d’activité.
+À chaque changement de fenêtre ou déplacement important :
 
-La souris reste prioritaire : elle révèle les petits contrôles lorsque l’utilisateur souhaite réellement interagir avec eux.
+- l’ancien historique d’activité est supprimé ;
+- la nouvelle fenêtre est révélée quelques secondes ;
+- l’analyse locale reprend ensuite.
 
-## Coût
+## Détection d’activité
 
-Pour un écran 4K et une cellule de 24 px, le moteur travaille sur environ 14 400 cellules et une carte alpha de même taille. Les tableaux sont réutilisés et représentent seulement quelques centaines de kilo-octets.
+La capture GDI est directement réduite. Chaque cellule contient 3 × 3 échantillons par défaut. Deux images réduites sont comparées :
+
+- les faibles changements demandent confirmation ;
+- les cellules modifiées sont regroupées en composantes connexes ;
+- une composante trop petite est ignorée ;
+- une composante acceptée active son rectangle englobant avec une petite marge.
+
+## Rendu
+
+Deux champs de distance de Chebyshev sont calculés :
+
+- activité de contenu, coupée aux limites de la fenêtre au premier plan ;
+- activité de la souris, autorisée partout.
+
+La distance de Chebyshev produit des contours carrés. L’opacité est quantifiée en plusieurs niveaux : transparent, gris sombres, noir. La texture est agrandie en nearest-neighbour, donc sans flou spatial. Le fondu reste temporel et fluide.
+
+## Balayage de repos
+
+À intervalle configurable, une bande noire légèrement diagonale traverse la zone visible de la fenêtre au premier plan. Elle n’éclaircit jamais l’image et n’emploie aucune couleur. Le passage est calculé sur la petite grille et ne requiert aucune texture supplémentaire pleine résolution.
+
+## Budget mémoire
+
+Pour un écran 4K, cellule 24 px et 3 échantillons :
+
+- grille : environ 160 × 90 cellules ;
+- capture réduite : environ 480 × 270 × 4 octets ;
+- image précédente : même taille ;
+- carte alpha : environ 160 × 90 × 4 octets ;
+- tableaux de travail : nettement moins de 1 Mo.
+
+La dépense dominante est la surface transparente gérée par WPF/DWM, généralement de l’ordre d’une à deux surfaces 4K. Objectif : moins de 100 Mo par écran 4K.
