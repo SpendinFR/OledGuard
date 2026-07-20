@@ -1,17 +1,23 @@
-# Architecture hybride OledGuard 2.1
+# Conception du moteur de stabilité
 
-## Deux résolutions séparées
+## Trois temporalités
 
-La détection utilise une grille de 32 px afin de regrouper les changements en blocs cohérents. Le rendu utilise une grille de 16 px afin de retrouver le chemin souris pixelisé et progressif de la version originale.
+Chaque cellule est comparée à la capture précédente, à une référence moyenne et à une référence longue. Un mouvement court réinitialise immédiatement son âge. Une cellule ne devient candidate à l'assombrissement que lorsque les trois comparaisons sont stables.
 
-## Contenu
+## Nettoyage symétrique
 
-Les cellules modifiées sont regroupées par composantes. Les composantes trop petites sont ignorées. Une composante acceptée est agrandie jusqu'à une taille minimale, reçoit une marge, puis peut fusionner avec un bloc actif proche.
+La carte binaire passe par un filtre de majorité 3 × 3. Avec le réglage 6/9 :
 
-## Souris
+- au moins six voisins statiques rendent la cellule statique ;
+- au plus trois voisins statiques rendent la cellule active ;
+- les cas intermédiaires conservent leur état.
 
-Le calcul est celui du prototype 0.1 : à chaque position du pointeur, toutes les petites cellules situées dans un rayon circulaire reçoivent leur propre date d'expiration. En déplacement, les anciennes positions expirent avant les nouvelles et forment un chemin dynamique.
+Ensuite, les petits composants statiques sont retirés et les petits trous actifs entièrement entourés sont comblés. Le traitement fonctionne donc dans les deux sens.
 
-## Fondu
+## Régions uniformes
 
-Chaque cellule possède une opacité actuelle et une cible. La transition utilise l'incrément linéaire du moteur original. La cible statique est configurable et vaut 0,88 par défaut au lieu de 1,0.
+Une région statique nettoyée reçoit une seule opacité cible. Tous ses blocs utilisent le même fondu temporel. La luminosité moyenne de la région est contrôlée avant assombrissement afin de ne pas recouvrir inutilement une zone déjà noire.
+
+## Empreinte
+
+La résolution de travail dépend du nombre de cellules, pas de la résolution native. À 4K et 64 px par cellule, la grille contient environ 2 040 cellules et chaque référence d'analyse environ 128 Kio.

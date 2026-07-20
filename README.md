@@ -1,23 +1,28 @@
-# OledGuard 2.1 — moteur hybride réglable
+# OledGuard — moteur simple de stabilité
 
-Cette version fusionne les deux comportements confirmés par les exécutables de référence :
+OledGuard assombrit les grandes zones lumineuses qui restent réellement statiques. Il ne cherche plus à détecter une fenêtre active et n'ajoute aucun halo, chemin de souris ou effet artificiel.
 
-- **souris de la 0.1.0** : chemin circulaire composé de petits pixels, dont chaque position expire séparément et produit un dégradé temporel ;
-- **contenu de la 0.5.0** : les changements proches sont regroupés puis réveillent de gros blocs rectangulaires stables.
+## Principe
 
-Les zones statiques ne deviennent plus obligatoirement noires. Elles atteignent une opacité maximale réglable, **88 % par défaut**, avec le même fondu linéaire cellule par cellule que le moteur original.
+- L'écran est découpé en grandes zones de 64 × 64 pixels par défaut.
+- Chaque zone est comparée à des références courte, moyenne et longue.
+- Une zone doit rester stable sur les trois temporalités et dépasser le délai configuré avant de pouvoir être assombrie.
+- Les zones voisines sont nettoyées avec une règle de majorité bidirectionnelle.
+- Un petit îlot sombre est supprimé ; un petit trou clair entouré de zones sombres est comblé.
+- Les composantes trop petites sont ignorées.
+- La luminosité est évaluée sur toute la région : une région déjà très sombre n'est pas masquée inutilement.
+- Une activité réelle fait réapparaître la zone rapidement.
 
-## Réglages
+## Réglages conseillés
 
-La fenêtre de paramètres expose notamment :
-
-- taille des cellules de détection et des pixels visuels ;
-- assombrissement maximal, délai et vitesse de fondu ;
-- nombre de niveaux d'opacité ;
-- taille minimale, marge, fusion et dégradé des blocs réveillés ;
-- rayon et durée du chemin souris original ;
-- seuils de détection faibles et forts ;
-- fréquences d'analyse et nombre d'échantillons.
+- zones : 64 px ;
+- références : 2 s, 15 s et 60 s ;
+- délai statique : 120 s ;
+- fondu : 20 s ;
+- assombrissement maximal : 85 % ;
+- filtre : majorité 6/9, deux passes ;
+- région minimale : quatre cellules ;
+- trou clair maximal : trois cellules.
 
 ## Commandes
 
@@ -27,11 +32,4 @@ La fenêtre de paramètres expose notamment :
 
 ## Mémoire
 
-À 4K avec les valeurs par défaut :
-
-- détection : environ 120 × 68 cellules ;
-- rendu : environ 240 × 135 cellules ;
-- aucune capture 4K conservée ;
-- quelques petits tableaux et un tampon d'analyse réutilisé.
-
-La surface de composition WPF dépend de Windows et du pilote, mais le moteur ne crée aucune texture d'historique ou vidéo.
+Pour un écran 4K avec des cellules de 64 px et quatre échantillons par côté, la capture d'analyse mesure environ 240 × 136 pixels. Le moteur conserve quatre petits tampons réutilisés, sans historique vidéo 4K. L'overlay Windows reste la principale allocation graphique.

@@ -32,10 +32,11 @@ internal sealed class TrayService : IDisposable
         reveal.Click += (_, _) => _controller.RevealAll(TimeSpan.FromSeconds(10));
         menu.Items.Add(reveal);
 
-        var delayMenu = new Forms.ToolStripMenuItem("Délai avant noir");
-        foreach (var seconds in new[] { 5, 15, 30, 60, 120 })
+        var delayMenu = new Forms.ToolStripMenuItem("Délai avant assombrissement");
+        foreach (var seconds in new[] { 5, 15, 30, 60, 120, 300, 600 })
         {
-            var item = new Forms.ToolStripMenuItem($"{seconds} secondes") { CheckOnClick = true };
+            var label = seconds >= 60 && seconds % 60 == 0 ? $"{seconds / 60} minute(s)" : $"{seconds} secondes";
+            var item = new Forms.ToolStripMenuItem(label) { CheckOnClick = true };
             item.Click += (_, _) => _controller.SetDelaySeconds(seconds);
             _delayItems[seconds] = item;
             delayMenu.DropDownItems.Add(item);
@@ -65,7 +66,7 @@ internal sealed class TrayService : IDisposable
             _notifyIcon.ShowBalloonTip(
                 8000,
                 "OledGuard — vérification requise",
-                "Windows n'a pas confirmé l'exclusion du masque des captures. Testez qu'une zone noire réapparaît bien quand son contenu change.",
+                "Windows n'a pas confirmé l'exclusion du masque des captures. Testez qu'une zone assombrie réapparaît bien quand son contenu change.",
                 Forms.ToolTipIcon.Warning);
         }
 
@@ -96,7 +97,7 @@ internal sealed class TrayService : IDisposable
 
         _notifyIcon.Icon = _controller.Enabled ? _activeIcon : _inactiveIcon;
         _notifyIcon.Text = _controller.Enabled
-            ? $"OledGuard actif — noir après {_controller.Settings.StaticDelaySeconds} s"
+            ? $"OledGuard actif — assombrissement après {_controller.Settings.StaticDelaySeconds} s"
             : "OledGuard désactivé";
     }
 

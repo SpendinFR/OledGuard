@@ -5,47 +5,42 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 21;
+    public const int CurrentSchemaVersion = 30;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
 
-    // Coarse grid used for change detection and large rectangular content blocks.
-    public int DetectionCellSizePixels { get; set; } = 32;
-    public int SamplesPerCell { get; set; } = 3;
+    // Analysis grid. A 64 px grid is about 60 x 34 cells on a 4K display.
+    public int DetectionCellSizePixels { get; set; } = 64;
+    public int SamplesPerCell { get; set; } = 4;
     public int VisibleSamplingMilliseconds { get; set; } = 1000;
-    public int MaskedSamplingMilliseconds { get; set; } = 250;
+    public int MaskedSamplingMilliseconds { get; set; } = 500;
 
-    // Fine visual grid used by the original pixel trail and opacity fade.
-    public int VisualCellSizePixels { get; set; } = 16;
-    public int OpacitySteps { get; set; } = 33;
-    public double MaximumMaskOpacity { get; set; } = 0.88;
-    public int StaticDelaySeconds { get; set; } = 30;
-    public int DarkenFadeMilliseconds { get; set; } = 4200;
-    public int RevealFadeMilliseconds { get; set; } = 140;
-    public byte MinimumLuminanceToDim { get; set; } = 0;
+    // A cell is accepted as static only when it agrees with references from
+    // several time scales and has accumulated enough stable confirmations.
+    public int ShortReferenceSeconds { get; set; } = 2;
+    public int MediumReferenceSeconds { get; set; } = 15;
+    public int LongReferenceSeconds { get; set; } = 60;
+    public int StableConfirmationSamples { get; set; } = 3;
+    public double DifferenceThreshold { get; set; } = 4.0;
+    public double ChangedSampleFraction { get; set; } = 0.08;
 
-    // Version 0.5 content grouping: nearby changes become one stable large block.
-    public int ContentActivationPaddingCells { get; set; } = 1;
-    public int ContentMergeGapCells { get; set; } = 1;
-    public int MinimumActivityComponentCells { get; set; } = 2;
-    public int MinimumRevealBlockWidthCells { get; set; } = 2;
-    public int MinimumRevealBlockHeightCells { get; set; } = 2;
-    public int ContentFeatherRadiusPixels { get; set; } = 56;
-    public int ContentCornerRoundnessPercent { get; set; } = 18;
+    // Time-based protection.
+    public int StaticDelaySeconds { get; set; } = 120;
+    public int DarkenFadeMilliseconds { get; set; } = 20_000;
+    public int RevealFadeMilliseconds { get; set; } = 150;
+    public double MaximumMaskOpacity { get; set; } = 0.85;
 
-    // Original 0.1 mouse behaviour: each cursor position refreshes a circular set
-    // of fine cells. Old positions expire independently, creating a dynamic trail.
-    public int MouseRevealRadiusPixels { get; set; } = 170;
-    public int MouseRevealHoldMilliseconds { get; set; } = 30_000;
-    public bool MouseRevealWhileStationary { get; set; } = true;
+    // Dark content already emits little light. The threshold is evaluated on
+    // the average luminance of an entire cleaned region, not cell by cell.
+    public byte MinimumLuminanceToDim { get; set; } = 12;
 
-    // Change detector.
-    public double DifferenceThreshold { get; set; } = 3.0;
-    public double ChangedSampleFraction { get; set; } = 0.10;
-    public double StrongDifferenceThreshold { get; set; } = 9.0;
-    public double StrongChangedSampleFraction { get; set; } = 0.24;
-    public int WeakChangeConfirmationSamples { get; set; } = 2;
+    // Bidirectional cleanup: majority passes remove isolated dim islands and
+    // isolated bright holes. Component limits finish the cleanup.
+    public int MajorityFilterPasses { get; set; } = 2;
+    public int MajorityDimThreshold { get; set; } = 6;
+    public int MinimumDimRegionCells { get; set; } = 4;
+    public int MaximumBrightHoleCells { get; set; } = 3;
 
     public bool StartWithWindows { get; set; }
 
@@ -58,64 +53,53 @@ public sealed class AppSettings
             return;
         }
 
-        DetectionCellSizePixels = 32;
-        SamplesPerCell = 3;
+        DetectionCellSizePixels = 64;
+        SamplesPerCell = 4;
         VisibleSamplingMilliseconds = 1000;
-        MaskedSamplingMilliseconds = 250;
-        VisualCellSizePixels = 16;
-        OpacitySteps = 33;
-        MaximumMaskOpacity = 0.88;
-        StaticDelaySeconds = 30;
-        DarkenFadeMilliseconds = 4200;
-        RevealFadeMilliseconds = 140;
-        MinimumLuminanceToDim = 0;
-        ContentActivationPaddingCells = 1;
-        ContentMergeGapCells = 1;
-        MinimumActivityComponentCells = 2;
-        MinimumRevealBlockWidthCells = 2;
-        MinimumRevealBlockHeightCells = 2;
-        ContentFeatherRadiusPixels = 56;
-        ContentCornerRoundnessPercent = 18;
-        MouseRevealRadiusPixels = 170;
-        MouseRevealHoldMilliseconds = 30_000;
-        MouseRevealWhileStationary = true;
-        DifferenceThreshold = 3.0;
-        ChangedSampleFraction = 0.10;
-        StrongDifferenceThreshold = 9.0;
-        StrongChangedSampleFraction = 0.24;
-        WeakChangeConfirmationSamples = 2;
+        MaskedSamplingMilliseconds = 500;
+        ShortReferenceSeconds = 2;
+        MediumReferenceSeconds = 15;
+        LongReferenceSeconds = 60;
+        StableConfirmationSamples = 3;
+        DifferenceThreshold = 4.0;
+        ChangedSampleFraction = 0.08;
+        StaticDelaySeconds = 120;
+        DarkenFadeMilliseconds = 20_000;
+        RevealFadeMilliseconds = 150;
+        MaximumMaskOpacity = 0.85;
+        MinimumLuminanceToDim = 12;
+        MajorityFilterPasses = 2;
+        MajorityDimThreshold = 6;
+        MinimumDimRegionCells = 4;
+        MaximumBrightHoleCells = 3;
         SchemaVersion = CurrentSchemaVersion;
     }
 
     public void Normalize()
     {
         SchemaVersion = CurrentSchemaVersion;
-        DetectionCellSizePixels = Math.Clamp(DetectionCellSizePixels, 16, 96);
-        VisualCellSizePixels = Math.Clamp(VisualCellSizePixels, 8, 48);
-        VisualCellSizePixels = Math.Min(VisualCellSizePixels, DetectionCellSizePixels);
-        SamplesPerCell = Math.Clamp(SamplesPerCell, 2, 6);
+        DetectionCellSizePixels = Math.Clamp(DetectionCellSizePixels, 32, 160);
+        SamplesPerCell = Math.Clamp(SamplesPerCell, 2, 8);
         VisibleSamplingMilliseconds = Math.Clamp(VisibleSamplingMilliseconds, 250, 10_000);
         MaskedSamplingMilliseconds = Math.Clamp(MaskedSamplingMilliseconds, 100, 5_000);
-        OpacitySteps = Math.Clamp(OpacitySteps, 4, 64);
-        MaximumMaskOpacity = Math.Clamp(MaximumMaskOpacity, 0.35, 1.0);
-        StaticDelaySeconds = Math.Clamp(StaticDelaySeconds, 5, 600);
-        DarkenFadeMilliseconds = Math.Clamp(DarkenFadeMilliseconds, 250, 30_000);
-        RevealFadeMilliseconds = Math.Clamp(RevealFadeMilliseconds, 40, 3_000);
-        MinimumLuminanceToDim = (byte)Math.Clamp(MinimumLuminanceToDim, (byte)0, (byte)80);
-        ContentActivationPaddingCells = Math.Clamp(ContentActivationPaddingCells, 0, 5);
-        ContentMergeGapCells = Math.Clamp(ContentMergeGapCells, 0, 5);
-        MinimumActivityComponentCells = Math.Clamp(MinimumActivityComponentCells, 1, 12);
-        MinimumRevealBlockWidthCells = Math.Clamp(MinimumRevealBlockWidthCells, 1, 10);
-        MinimumRevealBlockHeightCells = Math.Clamp(MinimumRevealBlockHeightCells, 1, 10);
-        ContentFeatherRadiusPixels = Math.Clamp(ContentFeatherRadiusPixels, 0, 240);
-        ContentCornerRoundnessPercent = Math.Clamp(ContentCornerRoundnessPercent, 0, 100);
-        MouseRevealRadiusPixels = Math.Clamp(MouseRevealRadiusPixels, 20, 500);
-        MouseRevealHoldMilliseconds = Math.Clamp(MouseRevealHoldMilliseconds, 0, 120_000);
+
+        ShortReferenceSeconds = Math.Clamp(ShortReferenceSeconds, 1, 15);
+        MediumReferenceSeconds = Math.Clamp(MediumReferenceSeconds, ShortReferenceSeconds + 1, 120);
+        LongReferenceSeconds = Math.Clamp(LongReferenceSeconds, MediumReferenceSeconds + 1, 600);
+        StableConfirmationSamples = Math.Clamp(StableConfirmationSamples, 1, 12);
         DifferenceThreshold = Math.Clamp(DifferenceThreshold, 0.5, 50.0);
         ChangedSampleFraction = Math.Clamp(ChangedSampleFraction, 0.01, 1.0);
-        StrongDifferenceThreshold = Math.Clamp(StrongDifferenceThreshold, DifferenceThreshold, 100.0);
-        StrongChangedSampleFraction = Math.Clamp(StrongChangedSampleFraction, ChangedSampleFraction, 1.0);
-        WeakChangeConfirmationSamples = Math.Clamp(WeakChangeConfirmationSamples, 1, 6);
+
+        StaticDelaySeconds = Math.Clamp(StaticDelaySeconds, 5, 3600);
+        DarkenFadeMilliseconds = Math.Clamp(DarkenFadeMilliseconds, 500, 120_000);
+        RevealFadeMilliseconds = Math.Clamp(RevealFadeMilliseconds, 40, 5_000);
+        MaximumMaskOpacity = Math.Clamp(MaximumMaskOpacity, 0.25, 0.98);
+        MinimumLuminanceToDim = (byte)Math.Clamp(MinimumLuminanceToDim, (byte)0, (byte)100);
+
+        MajorityFilterPasses = Math.Clamp(MajorityFilterPasses, 0, 5);
+        MajorityDimThreshold = Math.Clamp(MajorityDimThreshold, 5, 8);
+        MinimumDimRegionCells = Math.Clamp(MinimumDimRegionCells, 1, 100);
+        MaximumBrightHoleCells = Math.Clamp(MaximumBrightHoleCells, 0, 100);
     }
 }
 
