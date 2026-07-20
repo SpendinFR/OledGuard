@@ -1,42 +1,41 @@
-# OledGuard — moteur simple de stabilité
+# OledGuard 3.2 — exposition cumulative
 
-OledGuard assombrit les grandes zones lumineuses qui restent réellement statiques. Il ne cherche plus à détecter une fenêtre active et n'ajoute aucun halo, chemin de souris ou effet artificiel.
+OledGuard assombrit progressivement les zones lumineuses qui restent réellement statiques sur un écran OLED.
 
-## Principe
+## Changement principal
 
-- L'écran est découpé en grandes zones de 64 × 64 pixels par défaut.
-- Chaque zone est comparée à des références courte, moyenne et longue.
-- Une zone doit rester stable sur les trois temporalités et dépasser le délai configuré avant de pouvoir être assombrie.
-- Les zones voisines sont nettoyées avec une règle de majorité bidirectionnelle.
-- Un petit îlot sombre est supprimé ; un petit trou clair entouré de zones sombres est comblé.
-- Les composantes trop petites sont ignorées.
-- La luminosité est évaluée sur toute la région : une région déjà très sombre n'est pas masquée inutilement.
-- Une activité réelle fait réapparaître la zone rapidement.
+La version 3.2 ne considère plus qu'un mouvement remet le risque à zéro.
 
-## Réglages conseillés
+- chaque sous-zone conserve une dette d'exposition lumineuse ;
+- la dette augmente selon la durée, la stabilité et la luminance ;
+- une interruption courte révèle immédiatement l'image mais ne supprime presque pas la dette ;
+- avec le réglage par défaut, une seconde de mouvement retire seulement 0,2 seconde d'exposition équivalente ;
+- la dette est sauvegardée dans `%LOCALAPPDATA%\OledGuard\exposure` et survit aux redémarrages ;
+- le masque tient compte de la lumière restante après assombrissement afin de ne pas compter la zone comme si elle était encore à pleine luminosité.
 
-- zones : 64 px ;
-- références : 2 s, 15 s et 60 s ;
-- délai statique : 120 s ;
-- fondu : 20 s ;
-- assombrissement maximal : 85 % ;
-- filtre : majorité 6/9, deux passes ;
-- région minimale : quatre cellules ;
-- trou clair maximal : trois cellules.
+## Valeurs par défaut
 
-## Commandes
+- stabilité avant accumulation : 30 secondes ;
+- début de l'assombrissement : 8 minutes équivalentes à blanc maximal ;
+- protection maximale : 25 minutes équivalentes à blanc maximal ;
+- attente après mouvement avant retour du masque : 12 secondes ;
+- assombrissement maximal : 35 % ;
+- fondu vers sombre : 12 secondes ;
+- réapparition : 1,2 seconde ;
+- sauvegarde de la dette : toutes les 5 minutes.
+
+Les couleurs sombres cumulent très peu de dette. Les blancs et interfaces claires cumulent nettement plus vite grâce à une pondération non linéaire de la luminance.
+
+## Détection
+
+- références courte, moyenne et longue ;
+- âge indépendant pour chaque sous-zone ;
+- nettoyage bidirectionnel des petits îlots et trous ;
+- opacité uniforme dans chaque région connectée pour éviter les bandes internes ;
+- aucune capture vidéo 4K conservée.
+
+## Commandes existantes
 
 - `Ctrl + Alt + O` : activer ou désactiver ;
 - `Ctrl + Alt + R` : révéler tout pendant 10 secondes ;
 - clic droit sur l'icône : paramètres et fermeture.
-
-## Mémoire
-
-Pour un écran 4K avec des cellules de 64 px et quatre échantillons par côté, la capture d'analyse mesure environ 240 × 136 pixels. Le moteur conserve quatre petits tampons réutilisés, sans historique vidéo 4K. L'overlay Windows reste la principale allocation graphique.
-
-
-## Correction 3.1
-
-- Chaque sous-échantillon conserve son propre âge de stabilité. Un changement au centre d’une fenêtre ne remet donc plus à zéro les bandes identiques autour.
-- Une région statique connectée partage une seule opacité pendant le fondu, ce qui supprime les bandes internes.
-- Le réglage 128 px avec 8 sous-zones donne environ 16 px de précision réelle sans capture 4K.

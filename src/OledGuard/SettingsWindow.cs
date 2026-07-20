@@ -24,7 +24,13 @@ namespace OledGuard;
 
 internal sealed class SettingsWindow : Window
 {
-    private readonly ComboBox _staticDelay;
+    private readonly Slider _staticEligibility;
+    private readonly Slider _reapplyDelay;
+    private readonly Slider _exposureStart;
+    private readonly Slider _exposureFull;
+    private readonly Slider _movementDecay;
+    private readonly Slider _uncertainDecay;
+    private readonly Slider _exposureSave;
     private readonly ComboBox _cellSize;
     private readonly ComboBox _samplesPerCell;
     private readonly Slider _maximumOpacity;
@@ -47,11 +53,11 @@ internal sealed class SettingsWindow : Window
 
     public SettingsWindow(AppSettings settings)
     {
-        Title = "OledGuard — Détection de stabilité";
-        Width = 620;
-        Height = 820;
-        MinWidth = 520;
-        MinHeight = 620;
+        Title = "OledGuard — Exposition cumulative";
+        Width = 640;
+        Height = 880;
+        MinWidth = 540;
+        MinHeight = 640;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         ResizeMode = ResizeMode.CanResize;
         Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(245, 245, 245));
@@ -63,7 +69,7 @@ internal sealed class SettingsWindow : Window
 
         var heading = new TextBlock
         {
-            Text = "Zones statiques propres",
+            Text = "Protection cumulative OLED",
             FontSize = 22,
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(0, 0, 0, 5)
@@ -73,7 +79,7 @@ internal sealed class SettingsWindow : Window
 
         var subtitle = new TextBlock
         {
-            Text = "Chaque sous-zone garde son propre âge ; les régions connectées partagent ensuite une opacité uniforme.",
+            Text = "Une interruption courte révèle l'image, mais n'efface plus l'exposition accumulée. Les zones lumineuses fixes sont traitées avant les zones sombres.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = System.Windows.Media.Brushes.DimGray,
             Margin = new Thickness(0, 30, 0, 10)
@@ -91,17 +97,20 @@ internal sealed class SettingsWindow : Window
         Grid.SetRow(scroll, 1);
         root.Children.Add(scroll);
 
+        AddSection(form, "Exposition cumulée");
+        _exposureStart = AddSlider(form, "Commencer à assombrir après", 1, 120, settings.ExposureStartMinutes, "min équiv. blanc", 1);
+        _exposureFull = AddSlider(form, "Atteindre la protection maximale après", 2, 360, settings.ExposureFullMinutes, "min équiv. blanc", 1);
+        _staticEligibility = AddSlider(form, "Stabilité avant de cumuler l'exposition", 5, 600, settings.StaticEligibilitySeconds, "s");
+        _reapplyDelay = AddSlider(form, "Attente avant de réappliquer après mouvement", 1, 120, settings.ReapplyDelaySeconds, "s");
+        _movementDecay = AddSlider(form, "Dette effacée pendant un vrai mouvement", 0, 200, settings.MovementExposureDecayRate * 100.0, "% du temps");
+        _uncertainDecay = AddSlider(form, "Dette effacée pendant une zone incertaine", 0, 100, settings.UncertainExposureDecayRate * 100.0, "% du temps");
+        _exposureSave = AddSlider(form, "Sauvegarder la dette toutes les", 1, 60, settings.ExposureSaveMinutes, "min");
+
         AddSection(form, "Résultat visuel");
-        _staticDelay = AddCombo(
-            form,
-            "Temps sans mouvement avant assombrissement",
-            new[] { 5, 15, 30, 60, 120, 180, 300, 600, 900 },
-            settings.StaticDelaySeconds,
-            "secondes");
-        _maximumOpacity = AddSlider(form, "Assombrissement maximum", 25, 98, settings.MaximumMaskOpacity * 100.0, "%");
-        _minimumLuminance = AddSlider(form, "Ne pas traiter une région plus sombre que", 0, 100, settings.MinimumLuminanceToDim, "luminance");
+        _maximumOpacity = AddSlider(form, "Assombrissement maximum", 10, 90, settings.MaximumMaskOpacity * 100.0, "%");
+        _minimumLuminance = AddSlider(form, "Ignorer une région plus sombre que", 0, 120, settings.MinimumLuminanceToDim, "luminance");
         _darkenFade = AddSlider(form, "Durée du fondu vers sombre", 1, 120, settings.DarkenFadeMilliseconds / 1000.0, "s");
-        _revealFade = AddSlider(form, "Réapparition après mouvement", 40, 2000, settings.RevealFadeMilliseconds, "ms");
+        _revealFade = AddSlider(form, "Réapparition après mouvement", 100, 5000, settings.RevealFadeMilliseconds, "ms");
 
         AddSection(form, "Comparaisons temporelles");
         _shortReference = AddSlider(form, "Référence courte", 1, 15, settings.ShortReferenceSeconds, "s");
@@ -144,7 +153,7 @@ internal sealed class SettingsWindow : Window
 
         form.Children.Add(new TextBlock
         {
-            Text = "Ton réglage 128 px / 8 donne environ 16 px de précision réelle : les bords inchangés gardent leur ancienneté même si la fenêtre centrale change. Les régions statiques connectées utilisent exactement la même opacité, sans bandes internes.",
+            Text = "Avec le réglage par défaut, une seconde de mouvement ne retire que 0,2 seconde de dette. Le masque disparaît pour ne pas gêner, puis revient après 12 secondes si la zone redevient fixe. La dette est conservée dans %LOCALAPPDATA%\\OledGuard\\exposure.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = System.Windows.Media.Brushes.DimGray,
             Margin = new Thickness(0, 12, 0, 12)
@@ -192,7 +201,13 @@ internal sealed class SettingsWindow : Window
     public AppSettings BuildSettings(AppSettings original)
     {
         var updated = original.Clone();
-        updated.StaticDelaySeconds = (int)_staticDelay.SelectedItem;
+        updated.StaticEligibilitySeconds = (int)Math.Round(_staticEligibility.Value);
+        updated.ReapplyDelaySeconds = (int)Math.Round(_reapplyDelay.Value);
+        updated.ExposureStartMinutes = _exposureStart.Value;
+        updated.ExposureFullMinutes = Math.Max(_exposureFull.Value, updated.ExposureStartMinutes + 1.0);
+        updated.MovementExposureDecayRate = _movementDecay.Value / 100.0;
+        updated.UncertainExposureDecayRate = _uncertainDecay.Value / 100.0;
+        updated.ExposureSaveMinutes = (int)Math.Round(_exposureSave.Value);
         updated.DetectionCellSizePixels = (int)_cellSize.SelectedItem;
         updated.SamplesPerCell = (int)_samplesPerCell.SelectedItem;
         updated.MaximumMaskOpacity = _maximumOpacity.Value / 100.0;
@@ -284,7 +299,7 @@ internal sealed class SettingsWindow : Window
         var panel = new DockPanel();
         var valueText = new TextBlock
         {
-            Width = 110,
+            Width = 135,
             TextAlignment = TextAlignment.Right,
             VerticalAlignment = VerticalAlignment.Center
         };

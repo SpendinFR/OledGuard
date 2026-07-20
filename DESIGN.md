@@ -1,28 +1,35 @@
-# Conception du moteur de stabilité
+# Conception du moteur cumulatif 3.2
 
-## Trois temporalités
+## Dette d'exposition
 
-Chaque cellule est comparée à la capture précédente, à une référence moyenne et à une référence longue. Un mouvement court réinitialise immédiatement son âge. Une cellule ne devient candidate à l'assombrissement que lorsque les trois comparaisons sont stables.
+Chaque cellule conserve une valeur en secondes équivalentes à pleine luminance. Pour une capture stable :
 
-## Nettoyage symétrique
+`gain = durée × poids_luminance × lumière_restante`
 
-La carte binaire passe par un filtre de majorité 3 × 3. Avec le réglage 6/9 :
+Le poids de luminance est nul sous le seuil configuré, puis augmente avec une courbe de puissance 1,6. Le blanc fixe cumule donc beaucoup plus vite qu'un gris sombre.
 
-- au moins six voisins statiques rendent la cellule statique ;
-- au plus trois voisins statiques rendent la cellule active ;
-- les cas intermédiaires conservent leur état.
+La lumière restante vaut approximativement `1 - opacité`. Une cellule déjà assombrie continue d'accumuler, mais moins vite puisqu'elle émet réellement moins de lumière.
 
-Ensuite, les petits composants statiques sont retirés et les petits trous actifs entièrement entourés sont comblés. Le traitement fonctionne donc dans les deux sens.
+## Mouvement et interruption courte
 
-## Régions uniformes
+Un changement soutenu révèle la zone, mais ne remet pas la dette à zéro :
 
-Une région statique nettoyée reçoit une seule opacité cible. Tous ses blocs utilisent le même fondu temporel. La luminosité moyenne de la région est contrôlée avant assombrissement afin de ne pas recouvrir inutilement une zone déjà noire.
+`perte = durée × taux_de_décroissance`
 
-## Empreinte
+Le taux par défaut est 0,20 pendant un vrai mouvement. Une interruption d'une seconde ne retire donc que 0,2 seconde de dette. Une zone incertaine décroît encore plus lentement, à 0,03 par défaut.
 
-La résolution de travail dépend du nombre de cellules, pas de la résolution native. À 4K et 64 px par cellule, la grille contient environ 2 040 cellules et chaque référence d'analyse environ 128 Kio.
+## Transformation de la dette en opacité
 
+- avant `ExposureStartMinutes`, la cible est nulle ;
+- entre le seuil de début et le seuil maximal, une interpolation smoothstep évite une apparition brutale ;
+- après `ExposureFullMinutes`, la cible atteint `MaximumMaskOpacity`.
 
-## Persistance spatiale 3.1
+Le mouvement supprime temporairement la région du masque. Après `ReapplyDelaySeconds`, la cible calculée depuis la dette redevient active sans recommencer tout le compteur.
 
-La taille de bloc et le nombre de sous-zones sont découplés. Chaque sous-zone garde son propre compteur temporel. Le masque nettoyé est ensuite regroupé en composantes connexes dont l’opacité est unique et persistante par recouvrement spatial entre deux analyses.
+## Persistance
+
+Chaque écran et chaque géométrie de grille possèdent un fichier binaire séparé dans `%LOCALAPPDATA%\OledGuard\exposure`. L'identité est hachée en SHA-256. Les écritures utilisent un fichier temporaire puis un remplacement atomique.
+
+## Limites assumées
+
+Le moteur mesure l'image finale capturée par Windows. Il ne connaît pas directement les sous-pixels physiques, les algorithmes internes du téléviseur ou la luminance HDR absolue. Il vise une réduction pratique de l'exposition différentielle, pas une mesure de vieillissement certifiée par le fabricant.
