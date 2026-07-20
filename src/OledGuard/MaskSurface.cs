@@ -19,7 +19,7 @@ internal sealed class MaskSurface : FrameworkElement
         for (var i = 0; i < _brushes.Length; i++)
         {
             var alpha = (byte)Math.Round(i * 255.0 / (_brushes.Length - 1));
-            var brush = new SolidColorBrush(Color.FromArgb(alpha, 0, 0, 0));
+            var brush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(alpha, 0, 0, 0));
             brush.Freeze();
             _brushes[i] = brush;
         }

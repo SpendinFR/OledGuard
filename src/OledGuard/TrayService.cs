@@ -45,7 +45,7 @@ internal sealed class TrayService : IDisposable
 
         menu.Items.Add(new Forms.ToolStripSeparator());
         var quit = new Forms.ToolStripMenuItem("Quitter");
-        quit.Click += (_, _) => Application.Current.Shutdown();
+        quit.Click += (_, _) => System.Windows.Application.Current.Shutdown();
         menu.Items.Add(quit);
 
         _notifyIcon = new Forms.NotifyIcon
@@ -73,13 +73,13 @@ internal sealed class TrayService : IDisposable
 
     private void OnControllerChanged(object? sender, EventArgs e)
     {
-        if (Application.Current.Dispatcher.CheckAccess())
+        if (System.Windows.Application.Current.Dispatcher.CheckAccess())
         {
             RefreshMenu();
         }
         else
         {
-            Application.Current.Dispatcher.BeginInvoke(new Action(RefreshMenu));
+            System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(RefreshMenu));
         }
     }
 
@@ -98,7 +98,7 @@ internal sealed class TrayService : IDisposable
 
     private void ShowSettings()
     {
-        Application.Current.Dispatcher.Invoke(() =>
+        System.Windows.Application.Current.Dispatcher.Invoke(() =>
         {
             var window = new SettingsWindow(_controller.Settings)
             {

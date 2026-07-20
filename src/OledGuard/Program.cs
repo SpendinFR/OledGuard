@@ -18,9 +18,9 @@ internal static class Program
         NativeMethods.TryEnablePerMonitorDpiAwareness();
         RenderOptions.ProcessRenderMode = RenderMode.Default;
 
-        var app = new Application
+        var app = new System.Windows.Application
         {
-            ShutdownMode = ShutdownMode.OnExplicitShutdown
+            ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown
         };
 
         var settingsStore = new SettingsStore();
@@ -29,11 +29,11 @@ internal static class Program
         app.DispatcherUnhandledException += (_, eventArgs) =>
         {
             controller.SetEnabled(false);
-            MessageBox.Show(
+            System.Windows.MessageBox.Show(
                 $"OledGuard a rencontré une erreur et la protection a été désactivée.\n\n{eventArgs.Exception.Message}",
                 "OledGuard",
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Error);
             eventArgs.Handled = true;
             app.Shutdown(-1);
         };

@@ -99,7 +99,7 @@ public sealed class ProtectionController : IDisposable
 
     private void OnDisplaySettingsChanged(object? sender, EventArgs e)
     {
-        Application.Current.Dispatcher.BeginInvoke(new Action(RecreateSessions));
+        System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(RecreateSessions));
     }
 
     private void RecreateSessions()

@@ -2,6 +2,12 @@ using System.Windows;
 using Button = System.Windows.Controls.Button;
 using CheckBox = System.Windows.Controls.CheckBox;
 using ComboBox = System.Windows.Controls.ComboBox;
+using VerticalAlignment = System.Windows.VerticalAlignment;
+using Orientation = System.Windows.Controls.Orientation;
+using HorizontalAlignment = System.Windows.HorizontalAlignment;
+using GridUnitType = System.Windows.Controls.GridUnitType;
+using GridLength = System.Windows.Controls.GridLength;
+using Dock = System.Windows.Controls.Dock;
 using DockPanel = System.Windows.Controls.DockPanel;
 using Grid = System.Windows.Controls.Grid;
 using RowDefinition = System.Windows.Controls.RowDefinition;
@@ -30,7 +36,7 @@ internal sealed class SettingsWindow : Window
         MinHeight = 460;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         ResizeMode = ResizeMode.CanMinimize;
-        Background = new SolidColorBrush(Color.FromRgb(245, 245, 245));
+        Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(245, 245, 245));
 
         var root = new Grid { Margin = new Thickness(22) };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -70,7 +76,7 @@ internal sealed class SettingsWindow : Window
         {
             Text = "30 s est le réglage conseillé. Une zone qui change redevient visible immédiatement. Ctrl+Alt+O active/désactive ; Ctrl+Alt+R révèle tout pendant 10 s.",
             TextWrapping = TextWrapping.Wrap,
-            Foreground = Brushes.DimGray,
+            Foreground = System.Windows.Media.Brushes.DimGray,
             Margin = new Thickness(0, 18, 0, 0)
         };
         form.Children.Add(note);
@@ -118,7 +124,7 @@ internal sealed class SettingsWindow : Window
         }
         combo.SelectedItem = values.Contains(selected) ? selected : values.OrderBy(value => Math.Abs(value - selected)).First();
         parent.Children.Add(combo);
-        parent.Children.Add(new TextBlock { Text = suffix, Foreground = Brushes.Gray, Margin = new Thickness(190, -25, 0, 8) });
+        parent.Children.Add(new TextBlock { Text = suffix, Foreground = System.Windows.Media.Brushes.Gray, Margin = new Thickness(190, -25, 0, 8) });
         return combo;
     }
 
