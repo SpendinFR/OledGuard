@@ -1,45 +1,35 @@
-# OledGuard 4 â€” moteur natif Windows
+# OledGuard — moteur simple de stabilité
 
-OledGuard dÃ©tecte les Ã©lÃ©ments lumineux qui restent immobiles sur une TV ou un moniteur OLED, puis les assombrit localement sans bloquer la souris : textes blancs, croix de fermeture, icÃ´nes, bordures et grandes zones blanches.
+OledGuard assombrit les grandes zones lumineuses qui restent réellement statiques. Il ne cherche plus à détecter une fenêtre active et n'ajoute aucun halo, chemin de souris ou effet artificiel.
 
-Cette version a Ã©tÃ© rÃ©Ã©crite de zÃ©ro en **C#/.NET natif**. Elle n'utilise pas Python et ne reprend pas l'ancien moteur cumulatif.
+## Principe
 
-## Fonctionnement par dÃ©faut
+- L'écran est découpé en grandes zones de 64 × 64 pixels par défaut.
+- Chaque zone est comparée à des références courte, moyenne et longue.
+- Une zone doit rester stable sur les trois temporalités et dépasser le délai configuré avant de pouvoir être assombrie.
+- Les zones voisines sont nettoyées avec une règle de majorité bidirectionnelle.
+- Un petit îlot sombre est supprimé ; un petit trou clair entouré de zones sombres est comblé.
+- Les composantes trop petites sont ignorées.
+- La luminosité est évaluée sur toute la région : une région déjà très sombre n'est pas masquée inutilement.
+- Une activité réelle fait réapparaître la zone rapidement.
 
-- choix de l'Ã©cran OLED au premier dÃ©marrage ;
-- capture rÃ©duite de l'Ã©cran toutes les 750 ms ;
-- dÃ©tection du mouvement pixel par pixel ;
-- dÃ©but de l'assombrissement aprÃ¨s 30 secondes d'immobilitÃ© ;
-- force progressive jusqu'Ã  60 % maximum ;
-- disparition rapide du masque dÃ¨s qu'un Ã©lÃ©ment bouge ;
-- petite zone rÃ©vÃ©lÃ©e autour du curseur ;
-- overlay transparent aux clics et exclu de la capture pour Ã©viter une boucle visuelle.
+## Réglages conseillés
 
-Tous les seuils sont modifiables depuis **clic droit sur l'icÃ´ne OledGuard â†’ ParamÃ¨tres**.
-
-## TÃ©lÃ©charger l'exÃ©cutable compilÃ©
-
-1. Ouvrir l'onglet **Actions** du dÃ©pÃ´t.
-2. Ouvrir le dernier workflow vert **Build OledGuard native Windows**.
-3. TÃ©lÃ©charger l'artifact **OledGuard-native-win-x64**.
-4. DÃ©compresser puis lancer `OledGuard.exe`.
-
-L'exÃ©cutable est autonome : aucun Python et aucun .NET Ã  installer.
+- zones : 64 px ;
+- références : 2 s, 15 s et 60 s ;
+- délai statique : 120 s ;
+- fondu : 20 s ;
+- assombrissement maximal : 85 % ;
+- filtre : majorité 6/9, deux passes ;
+- région minimale : quatre cellules ;
+- trou clair maximal : trois cellules.
 
 ## Commandes
 
-Depuis l'icÃ´ne prÃ¨s de l'horloge Windows :
+- `Ctrl + Alt + O` : activer ou désactiver ;
+- `Ctrl + Alt + R` : révéler tout pendant 10 secondes ;
+- clic droit sur l'icône : paramètres et fermeture.
 
-- activer ou mettre en pause la protection ;
-- rÃ©vÃ©ler tout l'Ã©cran pendant 20 secondes ;
-- rÃ©initialiser la dÃ©tection ;
-- modifier les paramÃ¨tres ;
-- choisir un autre Ã©cran ;
-- lancer automatiquement OledGuard avec Windows ;
-- quitter complÃ¨tement le programme.
+## Mémoire
 
-Un double-clic sur l'icÃ´ne active ou met en pause la protection.
-
-## Limites
-
-Le programme complÃ¨te les protections intÃ©grÃ©es de la TV, mais ne garantit pas l'absence totale de marquage. Les jeux en plein Ã©cran exclusif, certains contenus DRM et certaines configurations HDR peuvent empÃªcher Windows d'afficher l'overlay correctement. Le mode fenÃªtrÃ© sans bordure est le plus compatible.
+Pour un écran 4K avec des cellules de 64 px et quatre échantillons par côté, la capture d'analyse mesure environ 240 × 136 pixels. Le moteur conserve quatre petits tampons réutilisés, sans historique vidéo 4K. L'overlay Windows reste la principale allocation graphique.
