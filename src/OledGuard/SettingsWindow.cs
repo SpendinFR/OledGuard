@@ -1,5 +1,13 @@
 using System.Windows;
-using System.Windows.Controls;
+using Button = System.Windows.Controls.Button;
+using CheckBox = System.Windows.Controls.CheckBox;
+using ComboBox = System.Windows.Controls.ComboBox;
+using DockPanel = System.Windows.Controls.DockPanel;
+using Grid = System.Windows.Controls.Grid;
+using RowDefinition = System.Windows.Controls.RowDefinition;
+using Slider = System.Windows.Controls.Slider;
+using StackPanel = System.Windows.Controls.StackPanel;
+using TextBlock = System.Windows.Controls.TextBlock;
 using System.Windows.Media;
 
 namespace OledGuard;
