@@ -1,22 +1,17 @@
-# Conception OledGuard 1.2
+# Architecture hybride OledGuard 2.1
 
-## Décision
+## Deux résolutions séparées
 
-La version 1.2 supprime le moteur de fenêtre active et revient à la carte alpha fine de la version 0.3, validée visuellement comme la plus naturelle.
+La détection utilise une grille de 32 px afin de regrouper les changements en blocs cohérents. Le rendu utilise une grille de 16 px afin de retrouver le chemin souris pixelisé et progressif de la version originale.
 
-## Carte de protection
+## Contenu
 
-- grille logique de 16 px ;
-- capture de 3 × 3 échantillons par cellule ;
-- fondu temporel vers le noir ;
-- interpolation linéaire de la petite carte alpha ;
-- léger feathering 3 × 3 uniquement au rendu ;
-- chemin souris circulaire composé de cellules superposées.
+Les cellules modifiées sont regroupées par composantes. Les composantes trop petites sont ignorées. Une composante acceptée est agrandie jusqu'à une taille minimale, reçoit une marge, puis peut fusionner avec un bloc actif proche.
 
-## Filtrage des taches
+## Souris
 
-Un changement doit toucher au moins deux échantillons dans une cellule. Un caret, un point clignotant ou une variation d’un seul échantillon ne réveille donc plus la zone. Les changements faibles doivent toujours être confirmés sur deux captures.
+Le calcul est celui du prototype 0.1 : à chaque position du pointeur, toutes les petites cellules situées dans un rayon circulaire reçoivent leur propre date d'expiration. En déplacement, les anciennes positions expirent avant les nouvelles et forment un chemin dynamique.
 
-## Mémoire
+## Fondu
 
-Aucun tampon 4K n’est conservé. Sur un écran 4K, la capture d’analyse reste proche de 720 × 405 BGRA et la carte alpha proche de 240 × 135.
+Chaque cellule possède une opacité actuelle et une cible. La transition utilise l'incrément linéaire du moteur original. La cible statique est configurable et vaut 0,88 par défaut au lieu de 1,0.

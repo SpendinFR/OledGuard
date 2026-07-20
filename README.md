@@ -1,26 +1,37 @@
-# OledGuard 1.2 — moteur dégradé restauré
+# OledGuard 2.1 — moteur hybride réglable
 
-Cette version revient au moteur visuel qui fonctionnait le mieux pendant les premiers essais.
+Cette version fusionne les deux comportements confirmés par les exécutables de référence :
 
-## Comportement
+- **souris de la 0.1.0** : chemin circulaire composé de petits pixels, dont chaque position expire séparément et produit un dégradé temporel ;
+- **contenu de la 0.5.0** : les changements proches sont regroupés puis réveillent de gros blocs rectangulaires stables.
 
-- L’écran entier est analysé par petites cellules de **16 × 16 pixels**.
-- Une cellule immobile pendant **30 secondes** s’assombrit progressivement jusqu’au noir.
-- Les grandes zones réellement statiques, comme le fond d’écran autour d’une fenêtre ou une barre immobile, s’éteignent naturellement et de façon cohérente.
-- Un changement réel réaffiche immédiatement la zone concernée.
-- La souris ouvre un chemin rond et fluide composé de petits pixels en dégradé, conservé visible pendant **30 secondes**.
-- Un changement limité à un seul échantillon est ignoré afin qu’un caret, un petit point clignotant ou du bruit de rendu ne crée plus de tache lumineuse.
-- Il n’y a plus de logique de fenêtre active, de rectangles grossiers, de balayage artificiel ni de gros halos.
+Les zones statiques ne deviennent plus obligatoirement noires. Elles atteignent une opacité maximale réglable, **88 % par défaut**, avec le même fondu linéaire cellule par cellule que le moteur original.
 
-## Optimisation
+## Réglages
 
-Pour un écran 4K, la carte de masque fait environ 240 × 135 pixels et la capture d’analyse environ 720 × 405 pixels. Aucune image 4K n’est conservée dans l’historique.
+La fenêtre de paramètres expose notamment :
+
+- taille des cellules de détection et des pixels visuels ;
+- assombrissement maximal, délai et vitesse de fondu ;
+- nombre de niveaux d'opacité ;
+- taille minimale, marge, fusion et dégradé des blocs réveillés ;
+- rayon et durée du chemin souris original ;
+- seuils de détection faibles et forts ;
+- fréquences d'analyse et nombre d'échantillons.
 
 ## Commandes
 
-- `Ctrl + Alt + O` : activer ou désactiver.
-- `Ctrl + Alt + R` : révéler tout pendant 10 secondes.
-- Double-clic sur l’icône : activer ou désactiver.
-- Clic droit sur l’icône : délai, paramètres et fermeture.
+- `Ctrl + Alt + O` : activer ou désactiver ;
+- `Ctrl + Alt + R` : révéler tout pendant 10 secondes ;
+- clic droit sur l'icône : paramètres et fermeture.
 
-Les réglages sont sauvegardés dans `%LOCALAPPDATA%\OledGuard\settings.json`. Le schéma 12 remet automatiquement les valeurs adaptées à ce moteur.
+## Mémoire
+
+À 4K avec les valeurs par défaut :
+
+- détection : environ 120 × 68 cellules ;
+- rendu : environ 240 × 135 cellules ;
+- aucune capture 4K conservée ;
+- quelques petits tableaux et un tampon d'analyse réutilisé.
+
+La surface de composition WPF dépend de Windows et du pilote, mais le moteur ne crée aucune texture d'historique ou vidéo.
