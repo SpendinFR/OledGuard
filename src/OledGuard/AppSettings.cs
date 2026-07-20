@@ -5,7 +5,7 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 33;
+    public const int CurrentSchemaVersion = 32;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
@@ -29,15 +29,15 @@ public sealed class AppSettings
     // at full-white luminance. Brief motion reveals the content but does not erase
     // the accumulated debt.
     public int StaticEligibilitySeconds { get; set; } = 30;
-    public int ReapplyDelaySeconds { get; set; } = 8;
-    public double ExposureStartMinutes { get; set; } = 0.5;
-    public double ExposureFullMinutes { get; set; } = 5.0;
+    public int ReapplyDelaySeconds { get; set; } = 12;
+    public double ExposureStartMinutes { get; set; } = 8.0;
+    public double ExposureFullMinutes { get; set; } = 25.0;
     public double MovementExposureDecayRate { get; set; } = 0.20;
     public double UncertainExposureDecayRate { get; set; } = 0.03;
     public int ExposureSaveMinutes { get; set; } = 5;
 
-    public int DarkenFadeMilliseconds { get; set; } = 8_000;
-    public int RevealFadeMilliseconds { get; set; } = 600;
+    public int DarkenFadeMilliseconds { get; set; } = 12_000;
+    public int RevealFadeMilliseconds { get; set; } = 1_200;
     public double MaximumMaskOpacity { get; set; } = 0.35;
 
     // Dark content already emits little light. This threshold is also used when
@@ -102,22 +102,6 @@ public sealed class AppSettings
             }
         }
 
-        // v3.3 migrates existing schema-32 users to visible cumulative defaults.
-        if (SchemaVersion < 33)
-        {
-            StaticEligibilitySeconds = 30;
-            ReapplyDelaySeconds = 8;
-            ExposureStartMinutes = 0.5;
-            ExposureFullMinutes = 5.0;
-            DarkenFadeMilliseconds = 8_000;
-            RevealFadeMilliseconds = 600;
-
-            if (MaximumMaskOpacity < 0.20 || MaximumMaskOpacity > 0.60)
-            {
-                MaximumMaskOpacity = 0.35;
-            }
-        }
-
         SchemaVersion = CurrentSchemaVersion;
     }
 
@@ -138,8 +122,9 @@ public sealed class AppSettings
 
         StaticEligibilitySeconds = Math.Clamp(StaticEligibilitySeconds, 5, 600);
         ReapplyDelaySeconds = Math.Clamp(ReapplyDelaySeconds, 1, 120);
-        ExposureStartMinutes = Math.Clamp(ExposureStartMinutes, 0.1, 120.0);
-        ExposureFullMinutes = Math.Clamp(ExposureFullMinutes, ExposureStartMinutes + 0.5, 360.0);
+        ReapplyDelaySeconds = Math.Min(ReapplyDelaySeconds, StaticEligibilitySeconds);
+        ExposureStartMinutes = Math.Clamp(ExposureStartMinutes, 1.0, 120.0);
+        ExposureFullMinutes = Math.Clamp(ExposureFullMinutes, ExposureStartMinutes + 1.0, 360.0);
         MovementExposureDecayRate = Math.Clamp(MovementExposureDecayRate, 0.0, 2.0);
         UncertainExposureDecayRate = Math.Clamp(UncertainExposureDecayRate, 0.0, 1.0);
         ExposureSaveMinutes = Math.Clamp(ExposureSaveMinutes, 1, 60);
