@@ -10,15 +10,16 @@ internal sealed class MonitorSession : IDisposable
     {
         public long LastMotionTicks;
         public int StableEvidence;
-        public int MotionEvidence;
         public byte Luminance;
-        public bool DimLatched;
+        public float ExposureSeconds;
+        public float TargetAlpha;
         public float Alpha;
     }
 
     private sealed class RegionState
     {
         public float Alpha;
+        public float TargetAlpha;
     }
 
     private readonly FormsScreen _screen;
@@ -31,9 +32,6 @@ internal sealed class MonitorSession : IDisposable
     private readonly int _sampleWidth;
     private readonly int _sampleHeight;
     private readonly int _sampleStride;
-    private readonly long _effectiveShortReferenceTicks;
-    private readonly long _effectiveMediumReferenceTicks;
-    private readonly long _effectiveLongReferenceTicks;
     private readonly byte[] _previous;
     private readonly byte[] _shortReference;
     private readonly byte[] _mediumReference;
@@ -42,13 +40,15 @@ internal sealed class MonitorSession : IDisposable
     private readonly bool[] _shortChanges;
     private readonly bool[] _mediumChanges;
     private readonly bool[] _longChanges;
-    private readonly bool[] _candidateStatic;
+    private readonly bool[] _rawStatic;
     private readonly bool[] _maskA;
     private readonly bool[] _maskB;
+    private readonly bool[] _cleanStableMask;
     private readonly bool[] _finalDimMask;
     private readonly bool[] _visited;
     private readonly int[] _queue;
     private readonly float[] _renderAlpha;
+    private readonly string _exposureIdentity;
     private int[] _regionMap;
     private int[] _nextRegionMap;
     private List<RegionState> _regions = new();
@@ -65,9 +65,8 @@ internal sealed class MonitorSession : IDisposable
     private long _longReferenceTicks;
     private long _revealAllUntilTicks;
     private long _lastAnimationTicks;
-    private int _lastCursorX = int.MinValue;
-    private int _lastCursorY = int.MinValue;
-    private bool _lastRevealEverything;
+    private long _lastCaptureTicks;
+    private long _lastExposureSaveTicks;
     private bool _disposed;
 
     public MonitorSession(FormsScreen screen, AppSettings settings)
@@ -85,17 +84,6 @@ internal sealed class MonitorSession : IDisposable
         _sampleHeight = _rows;
         _sampleStride = checked(_sampleWidth * 4);
 
-        var delayMilliseconds = settings.StaticDelaySeconds * 1000.0;
-        var shortCap = Math.Max(1000.0, delayMilliseconds * 0.25);
-        var effectiveShort = Math.Min(settings.ShortReferenceSeconds * 1000.0, shortCap);
-        var mediumCap = Math.Max(effectiveShort + 1000.0, delayMilliseconds * 0.50);
-        var effectiveMedium = Math.Min(settings.MediumReferenceSeconds * 1000.0, mediumCap);
-        var longCap = Math.Max(effectiveMedium + 1000.0, delayMilliseconds * 0.75);
-        var effectiveLong = Math.Min(settings.LongReferenceSeconds * 1000.0, longCap);
-        _effectiveShortReferenceTicks = ToStopwatchTicks(effectiveShort);
-        _effectiveMediumReferenceTicks = ToStopwatchTicks(effectiveMedium);
-        _effectiveLongReferenceTicks = ToStopwatchTicks(effectiveLong);
-
         var cellCount = checked(_columns * _rows);
         var sampleBytes = checked(_sampleStride * _sampleHeight);
         _cells = Enumerable.Range(0, cellCount).Select(_ => new Cell()).ToArray();
@@ -107,9 +95,10 @@ internal sealed class MonitorSession : IDisposable
         _shortChanges = new bool[cellCount];
         _mediumChanges = new bool[cellCount];
         _longChanges = new bool[cellCount];
-        _candidateStatic = new bool[cellCount];
+        _rawStatic = new bool[cellCount];
         _maskA = new bool[cellCount];
         _maskB = new bool[cellCount];
+        _cleanStableMask = new bool[cellCount];
         _finalDimMask = new bool[cellCount];
         _visited = new bool[cellCount];
         _queue = new int[cellCount];
@@ -119,11 +108,32 @@ internal sealed class MonitorSession : IDisposable
         Array.Fill(_regionMap, -1);
         Array.Fill(_nextRegionMap, -1);
 
+        _exposureIdentity = string.Join(
+            "|",
+            screen.DeviceName,
+            bounds.X,
+            bounds.Y,
+            bounds.Width,
+            bounds.Height,
+            _columns,
+            _rows);
+
+        var maximumExposureSeconds = GetMaximumStoredExposureSeconds();
+        var persistedExposure = ExposureStore.Load(
+            _exposureIdentity,
+            _columns,
+            _rows,
+            maximumExposureSeconds);
+        for (var index = 0; index < _cells.Length; index++)
+        {
+            _cells[index].ExposureSeconds = persistedExposure[index];
+        }
+
         _overlay = new OverlayWindow(screen);
         _sampler = new ScreenSampler(bounds, _sampleWidth, _sampleHeight);
         _animationTimer = new DispatcherTimer(DispatcherPriority.Render)
         {
-            Interval = TimeSpan.FromMilliseconds(33)
+            Interval = TimeSpan.FromMilliseconds(50)
         };
         _animationTimer.Tick += OnAnimationTick;
     }
@@ -144,22 +154,21 @@ internal sealed class MonitorSession : IDisposable
         {
             _enabled = enabled;
             var now = Stopwatch.GetTimestamp();
-            _revealAllUntilTicks = enabled ? now + ToStopwatchTicks(750) : now;
+            _revealAllUntilTicks = enabled ? now + ToStopwatchTicks(10_000) : now;
             _hasReferences = false;
             _shortReferenceTicks = 0;
             _mediumReferenceTicks = 0;
             _longReferenceTicks = 0;
-            _lastCursorX = int.MinValue;
-            _lastCursorY = int.MinValue;
-            _lastRevealEverything = enabled;
+            _lastCaptureTicks = 0;
 
             Array.Clear(_immediateChanges, 0, _immediateChanges.Length);
             Array.Clear(_shortChanges, 0, _shortChanges.Length);
             Array.Clear(_mediumChanges, 0, _mediumChanges.Length);
             Array.Clear(_longChanges, 0, _longChanges.Length);
-            Array.Clear(_candidateStatic, 0, _candidateStatic.Length);
+            Array.Clear(_rawStatic, 0, _rawStatic.Length);
             Array.Clear(_maskA, 0, _maskA.Length);
             Array.Clear(_maskB, 0, _maskB.Length);
+            Array.Clear(_cleanStableMask, 0, _cleanStableMask.Length);
             Array.Clear(_finalDimMask, 0, _finalDimMask.Length);
             Array.Fill(_regionMap, -1);
             Array.Fill(_nextRegionMap, -1);
@@ -169,16 +178,20 @@ internal sealed class MonitorSession : IDisposable
             {
                 cell.LastMotionTicks = now;
                 cell.StableEvidence = 0;
-                cell.MotionEvidence = 0;
                 cell.Luminance = 0;
-                cell.DimLatched = false;
+                cell.TargetAlpha = 0f;
                 cell.Alpha = 0f;
+                // ExposureSeconds intentionally survives disable/enable cycles.
             }
 
             _maskDirty = true;
         }
 
-        PushMask(Stopwatch.GetTimestamp(), default, false);
+        PushMask();
+        if (!enabled)
+        {
+            SaveExposureState();
+        }
     }
 
     public void RevealAll(TimeSpan duration)
@@ -202,7 +215,7 @@ internal sealed class MonitorSession : IDisposable
                 lock (_sync)
                 {
                     shouldCapture = _enabled;
-                    if (_regions.Count > 0 || _cells.Any(static cell => cell.Alpha > 0.02f))
+                    if (_cells.Any(static cell => cell.Alpha > 0.02f))
                     {
                         delay = _settings.MaskedSamplingMilliseconds;
                     }
@@ -229,6 +242,7 @@ internal sealed class MonitorSession : IDisposable
     private void AnalyzeCapture(byte[] current)
     {
         var now = Stopwatch.GetTimestamp();
+        var saveExposure = false;
 
         lock (_sync)
         {
@@ -247,14 +261,21 @@ internal sealed class MonitorSession : IDisposable
                 _shortReferenceTicks = now;
                 _mediumReferenceTicks = now;
                 _longReferenceTicks = now;
+                _lastCaptureTicks = now;
+                _lastExposureSaveTicks = now;
                 foreach (var cell in _cells)
                 {
                     cell.LastMotionTicks = now;
                     cell.StableEvidence = 0;
-                    cell.MotionEvidence = 0;
                 }
                 return;
             }
+
+            var elapsedSeconds = Math.Clamp(
+                FromStopwatchTicks(now - _lastCaptureTicks) / 1000.0,
+                0.0,
+                5.0);
+            _lastCaptureTicks = now;
 
             for (var index = 0; index < _cells.Length; index++)
             {
@@ -269,7 +290,6 @@ internal sealed class MonitorSession : IDisposable
                 _longChanges[index] = PixelChanged(current, _longReference, offset);
             }
 
-            var staticDelayTicks = ToStopwatchTicks(_settings.StaticDelaySeconds * 1000.0);
             for (var row = 0; row < _rows; row++)
             {
                 for (var column = 0; column < _columns; column++)
@@ -281,83 +301,59 @@ internal sealed class MonitorSession : IDisposable
                     var mediumChanged = HasSupportedChange(_mediumChanges, row, column);
                     var longChanged = HasSupportedChange(_longChanges, row, column);
 
-                    if (immediateChanged)
-                    {
-                        if (cell.MotionEvidence < int.MaxValue)
-                        {
-                            cell.MotionEvidence++;
-                        }
-                    }
-                    else
-                    {
-                        cell.MotionEvidence = 0;
-                    }
-
-                    if (cell.DimLatched)
-                    {
-                        if (cell.MotionEvidence >= _settings.MotionConfirmationSamples)
-                        {
-                            cell.DimLatched = false;
-                            cell.LastMotionTicks = now;
-                            cell.StableEvidence = 0;
-                            cell.MotionEvidence = 0;
-                        }
-
-                        _candidateStatic[index] = false;
-                        continue;
-                    }
-
                     if (immediateChanged || shortChanged)
                     {
                         cell.LastMotionTicks = now;
                         cell.StableEvidence = 0;
                     }
-                    else if (!mediumChanged && !longChanged)
+                    else
                     {
+                        // No recent movement: this area is currently stable.
+                        // Older medium/long references must not delay protection.
                         if (cell.StableEvidence < int.MaxValue)
                         {
                             cell.StableEvidence++;
                         }
                     }
-                    else
-                    {
-                        cell.StableEvidence = 0;
-                    }
 
-                    var brightEnough = _settings.MinimumLuminanceToDim <= 0 ||
-                        cell.Luminance > _settings.MinimumLuminanceToDim;
-                    _candidateStatic[index] =
-                        brightEnough &&
-                        cell.StableEvidence >= _settings.StableConfirmationSamples &&
-                        now - cell.LastMotionTicks >= staticDelayTicks &&
-                        !mediumChanged &&
-                        !longChanged;
+                    _rawStatic[index] = cell.StableEvidence >= _settings.StableConfirmationSamples;
                 }
             }
 
-            BuildLatchedDimMask();
-            RebuildUniformRegions();
+            BuildCleanDimMask(now, elapsedSeconds);
             Buffer.BlockCopy(current, 0, _previous, 0, current.Length);
 
-            if (now - _shortReferenceTicks >= _effectiveShortReferenceTicks)
+            if (now - _shortReferenceTicks >= ToStopwatchTicks(_settings.ShortReferenceSeconds * 1000.0))
             {
                 Buffer.BlockCopy(current, 0, _shortReference, 0, current.Length);
                 _shortReferenceTicks = now;
             }
 
-            if (now - _mediumReferenceTicks >= _effectiveMediumReferenceTicks)
+            if (now - _mediumReferenceTicks >= ToStopwatchTicks(_settings.MediumReferenceSeconds * 1000.0))
             {
                 Buffer.BlockCopy(current, 0, _mediumReference, 0, current.Length);
                 _mediumReferenceTicks = now;
             }
 
-            if (now - _longReferenceTicks >= _effectiveLongReferenceTicks)
+            if (now - _longReferenceTicks >= ToStopwatchTicks(_settings.LongReferenceSeconds * 1000.0))
             {
                 Buffer.BlockCopy(current, 0, _longReference, 0, current.Length);
                 _longReferenceTicks = now;
             }
 
+            var saveIntervalTicks = ToStopwatchTicks(_settings.ExposureSaveMinutes * 60_000.0);
+            if (now - _lastExposureSaveTicks >= saveIntervalTicks)
+            {
+                _lastExposureSaveTicks = now;
+                saveExposure = true;
+            }
+
             _maskDirty = true;
+        }
+
+        if (saveExposure)
+        {
+            SaveExposureState();
         }
     }
 
@@ -404,29 +400,13 @@ internal sealed class MonitorSession : IDisposable
             }
         }
 
-        var required = Math.Max(2, (int)Math.Ceiling(sampleCount * _settings.ChangedSampleFraction));
-        return changedCount >= Math.Min(sampleCount, required);
+        var required = Math.Max(1, (int)Math.Ceiling(sampleCount * _settings.ChangedSampleFraction));
+        return changedCount >= required;
     }
 
-    private void BuildLatchedDimMask()
+    private void BuildCleanDimMask(long now, double elapsedSeconds)
     {
-        CleanMask(_candidateStatic, _maskA);
-        for (var index = 0; index < _cells.Length; index++)
-        {
-            if (_maskA[index])
-            {
-                _cells[index].DimLatched = true;
-            }
-
-            _maskB[index] = _cells[index].DimLatched;
-        }
-
-        CleanMask(_maskB, _finalDimMask);
-    }
-
-    private void CleanMask(bool[] input, bool[] output)
-    {
-        Array.Copy(input, _maskA, input.Length);
+        Array.Copy(_rawStatic, _maskA, _rawStatic.Length);
         var source = _maskA;
         var destination = _maskB;
 
@@ -436,9 +416,116 @@ internal sealed class MonitorSession : IDisposable
             (source, destination) = (destination, source);
         }
 
-        Array.Copy(source, output, source.Length);
-        RemoveSmallDimIslands(output);
-        FillSmallBrightHoles(output);
+        Array.Copy(source, _cleanStableMask, source.Length);
+        RemoveSmallStaticIslands(_cleanStableMask);
+        FillSmallActiveHoles(_cleanStableMask);
+
+        UpdateCumulativeExposure(now, elapsedSeconds);
+        BuildExposureDimMask(now);
+        RebuildUniformRegions();
+    }
+
+    private void UpdateCumulativeExposure(long now, double elapsedSeconds)
+    {
+        if (elapsedSeconds <= 0.0)
+        {
+            return;
+        }
+
+        var eligibilityTicks = ToStopwatchTicks(_settings.StaticEligibilitySeconds * 1000.0);
+        var maximumExposure = GetMaximumStoredExposureSeconds();
+
+        for (var index = 0; index < _cells.Length; index++)
+        {
+            var cell = _cells[index];
+            var supportedMotion = _immediateChanges[index] || _shortChanges[index];
+            var stable = _cleanStableMask[index] && _rawStatic[index] && !supportedMotion;
+            var stableLongEnough = stable && now - cell.LastMotionTicks >= eligibilityTicks;
+
+            if (stableLongEnough)
+            {
+                var luminanceWeight = ComputeLuminanceWeight(cell.Luminance);
+                var remainingLight = Math.Clamp(1.0 - cell.Alpha, 0.05, 1.0);
+                cell.ExposureSeconds += (float)(elapsedSeconds * luminanceWeight * remainingLight);
+            }
+            else
+            {
+                var decayRate = supportedMotion
+                    ? _settings.MovementExposureDecayRate
+                    : _settings.UncertainExposureDecayRate;
+                cell.ExposureSeconds -= (float)(elapsedSeconds * decayRate);
+            }
+
+            cell.ExposureSeconds = Math.Clamp(cell.ExposureSeconds, 0f, maximumExposure);
+            cell.TargetAlpha = ComputeTargetAlpha(cell.ExposureSeconds);
+        }
+    }
+
+    private double ComputeLuminanceWeight(byte luminance)
+    {
+        if (luminance <= _settings.MinimumLuminanceToDim)
+        {
+            return 0.0;
+        }
+
+        var denominator = Math.Max(1.0, 255.0 - _settings.MinimumLuminanceToDim);
+        var normalized = Math.Clamp((luminance - _settings.MinimumLuminanceToDim) / denominator, 0.0, 1.0);
+
+        // Bright whites accumulate substantially faster than mid-grey UI chrome.
+        return Math.Pow(normalized, 1.6);
+    }
+
+    private float ComputeTargetAlpha(float exposureSeconds)
+    {
+        if (exposureSeconds <= 0f)
+        {
+            return 0f;
+        }
+
+        var start = Math.Max(1.0, _settings.ExposureStartMinutes * 60.0);
+        var full = Math.Max(start + 1.0, _settings.ExposureFullMinutes * 60.0);
+        var maximum = Math.Clamp(_settings.MaximumMaskOpacity, 0.0, 1.0);
+        var baseline = Math.Min(maximum, Math.Max(0.04, maximum * 0.20));
+
+        if (exposureSeconds < start)
+        {
+            return (float)(baseline * exposureSeconds / start);
+        }
+
+        var progress = Math.Clamp(
+            (exposureSeconds - start) / (full - start),
+            0.0,
+            1.0);
+
+        return (float)(baseline + progress * (maximum - baseline));
+    }
+
+    private void BuildExposureDimMask(long now)
+    {
+        var reapplyTicks = ToStopwatchTicks(_settings.ReapplyDelaySeconds * 1000.0);
+        for (var index = 0; index < _cleanStableMask.Length; index++)
+        {
+            var cell = _cells[index];
+            _maskA[index] = _cleanStableMask[index] &&
+                _rawStatic[index] &&
+                !_immediateChanges[index] &&
+                !_shortChanges[index] &&
+                now - cell.LastMotionTicks >= reapplyTicks &&
+                cell.TargetAlpha > 0.001f;
+        }
+
+        var source = _maskA;
+        var destination = _maskB;
+        for (var pass = 0; pass < _settings.MajorityFilterPasses; pass++)
+        {
+            ApplyBidirectionalMajority(source, destination);
+            (source, destination) = (destination, source);
+        }
+
+        Array.Copy(source, _finalDimMask, source.Length);
+        RemoveSmallStaticIslands(_finalDimMask);
+        FillSmallActiveHoles(_finalDimMask);
+        SuppressDarkRegions(_finalDimMask);
     }
 
     private void ApplyBidirectionalMajority(bool[] source, bool[] destination)
@@ -497,7 +584,7 @@ internal sealed class MonitorSession : IDisposable
         }
     }
 
-    private void RemoveSmallDimIslands(bool[] mask)
+    private void RemoveSmallStaticIslands(bool[] mask)
     {
         if (_settings.MinimumDimRegionCells <= 1)
         {
@@ -523,7 +610,7 @@ internal sealed class MonitorSession : IDisposable
         }
     }
 
-    private void FillSmallBrightHoles(bool[] mask)
+    private void FillSmallActiveHoles(bool[] mask)
     {
         if (_settings.MaximumBrightHoleCells <= 0)
         {
@@ -549,6 +636,39 @@ internal sealed class MonitorSession : IDisposable
         }
     }
 
+    private void SuppressDarkRegions(bool[] mask)
+    {
+        if (_settings.MinimumLuminanceToDim <= 0)
+        {
+            return;
+        }
+
+        Array.Clear(_visited, 0, _visited.Length);
+        for (var start = 0; start < mask.Length; start++)
+        {
+            if (!mask[start] || _visited[start])
+            {
+                continue;
+            }
+
+            var count = CollectComponent(mask, start, true, out _);
+            long luminanceTotal = 0;
+            for (var index = 0; index < count; index++)
+            {
+                luminanceTotal += _cells[_queue[index]].Luminance;
+            }
+
+            var averageLuminance = count == 0 ? 0 : luminanceTotal / count;
+            if (averageLuminance <= _settings.MinimumLuminanceToDim)
+            {
+                for (var index = 0; index < count; index++)
+                {
+                    mask[_queue[index]] = false;
+                }
+            }
+        }
+    }
+
     private void RebuildUniformRegions()
     {
         Array.Fill(_nextRegionMap, -1);
@@ -563,20 +683,47 @@ internal sealed class MonitorSession : IDisposable
             }
 
             var count = CollectComponent(_finalDimMask, start, true, out _);
-            var initialAlpha = 0f;
+            var overlapCounts = new Dictionary<int, int>();
+            double targetTotal = 0.0;
+            float targetMaximum = 0f;
+
             for (var index = 0; index < count; index++)
             {
                 var cellIndex = _queue[index];
-                initialAlpha = Math.Max(initialAlpha, _cells[cellIndex].Alpha);
+                var cellTarget = _cells[cellIndex].TargetAlpha;
+                targetTotal += cellTarget;
+                targetMaximum = Math.Max(targetMaximum, cellTarget);
+
                 var oldRegion = _regionMap[cellIndex];
-                if (oldRegion >= 0 && oldRegion < _regions.Count)
+                if (oldRegion < 0 || oldRegion >= _regions.Count)
                 {
-                    initialAlpha = Math.Max(initialAlpha, _regions[oldRegion].Alpha);
+                    continue;
                 }
+
+                overlapCounts.TryGetValue(oldRegion, out var overlap);
+                overlapCounts[oldRegion] = overlap + 1;
             }
 
+            float initialAlpha = 0f;
+            if (overlapCounts.Count > 0)
+            {
+                var bestOldRegion = overlapCounts.MaxBy(static pair => pair.Value).Key;
+                initialAlpha = _regions[bestOldRegion].Alpha;
+            }
+
+            var averageTarget = count == 0 ? 0f : (float)(targetTotal / count);
+            var regionTarget = Math.Clamp(
+                averageTarget * 0.65f + targetMaximum * 0.35f,
+                0f,
+                (float)_settings.MaximumMaskOpacity);
+
             var newRegionId = nextRegions.Count;
-            nextRegions.Add(new RegionState { Alpha = initialAlpha });
+            nextRegions.Add(new RegionState
+            {
+                Alpha = initialAlpha,
+                TargetAlpha = regionTarget
+            });
+
             for (var index = 0; index < count; index++)
             {
                 _nextRegionMap[_queue[index]] = newRegionId;
@@ -643,15 +790,7 @@ internal sealed class MonitorSession : IDisposable
             ? _animationTimer.Interval.TotalMilliseconds
             : FromStopwatchTicks(now - _lastAnimationTicks);
         _lastAnimationTicks = now;
-        NativeMethods.GetCursorPos(out var cursor);
-        var cursorMoved = cursor.X != _lastCursorX || cursor.Y != _lastCursorY;
-        _lastCursorX = cursor.X;
-        _lastCursorY = cursor.Y;
-
-        var revealEverything = now < _revealAllUntilTicks;
-        var revealStateChanged = revealEverything != _lastRevealEverything;
-        _lastRevealEverything = revealEverything;
-        var changed = cursorMoved || revealStateChanged;
+        var changed = false;
         var anyAnimating = false;
 
         lock (_sync)
@@ -662,17 +801,24 @@ internal sealed class MonitorSession : IDisposable
                 return;
             }
 
+            var revealEverything = now < _revealAllUntilTicks;
             var maximumOpacity = (float)_settings.MaximumMaskOpacity;
+
             foreach (var region in _regions)
             {
+                var target = revealEverything ? 0f : region.TargetAlpha;
+                var duration = target > region.Alpha
+                    ? _settings.DarkenFadeMilliseconds
+                    : _settings.RevealFadeMilliseconds;
+                var step = maximumOpacity * (float)(elapsedMs / Math.Max(1, duration));
                 var oldAlpha = region.Alpha;
-                var step = (float)(elapsedMs / Math.Max(1, _settings.DarkenFadeMilliseconds));
-                region.Alpha = Math.Min(maximumOpacity, region.Alpha + step);
+                region.Alpha = MoveTowards(region.Alpha, target, step);
+
                 if (Math.Abs(oldAlpha - region.Alpha) > 0.0005f)
                 {
                     changed = true;
                 }
-                if (region.Alpha < maximumOpacity - 0.001f)
+                if (Math.Abs(region.Alpha - target) > 0.001f)
                 {
                     anyAnimating = true;
                 }
@@ -684,13 +830,13 @@ internal sealed class MonitorSession : IDisposable
                 var oldAlpha = cell.Alpha;
                 var regionId = _regionMap[index];
 
-                if (regionId >= 0 && regionId < _regions.Count)
+                if (!revealEverything && regionId >= 0 && regionId < _regions.Count)
                 {
                     cell.Alpha = _regions[regionId].Alpha;
                 }
                 else if (cell.Alpha > 0f)
                 {
-                    var step = (float)(elapsedMs / Math.Max(1, _settings.RevealFadeMilliseconds));
+                    var step = maximumOpacity * (float)(elapsedMs / Math.Max(1, _settings.RevealFadeMilliseconds));
                     cell.Alpha = Math.Max(0f, cell.Alpha - step);
                 }
 
@@ -698,7 +844,7 @@ internal sealed class MonitorSession : IDisposable
                 {
                     changed = true;
                 }
-                if (regionId < 0 && cell.Alpha > 0.001f)
+                if ((regionId < 0 || revealEverything) && cell.Alpha > 0.001f)
                 {
                     anyAnimating = true;
                 }
@@ -708,65 +854,52 @@ internal sealed class MonitorSession : IDisposable
             _maskDirty = false;
         }
 
-        _animationTimer.Interval = TimeSpan.FromMilliseconds(
-            _settings.MouseRevealEnabled || anyAnimating ? 33 : 100);
+        _animationTimer.Interval = TimeSpan.FromMilliseconds(anyAnimating ? 33 : 100);
         if (changed)
         {
-            PushMask(now, cursor, true);
+            PushMask();
         }
     }
 
-    private void PushMask(long now, NativeMethods.Point cursor, bool hasCursor)
+    private void PushMask()
     {
         lock (_sync)
         {
-            var revealEverything = now < _revealAllUntilTicks;
-            var bounds = _screen.Bounds;
-            var useMouse = hasCursor && _settings.MouseRevealEnabled &&
-                (_settings.MouseRevealRadiusPixels > 0 || _settings.MouseRevealFeatherPixels > 0) &&
-                bounds.Contains(cursor.X, cursor.Y);
-            var innerRadius = _settings.MouseRevealRadiusPixels;
-            var feather = _settings.MouseRevealFeatherPixels;
-            var outerRadius = innerRadius + feather;
-
-            for (var row = 0; row < _rows; row++)
+            for (var index = 0; index < _cells.Length; index++)
             {
-                var centerY = bounds.Top + (row + 0.5) * bounds.Height / _rows;
-                for (var column = 0; column < _columns; column++)
-                {
-                    var index = row * _columns + column;
-                    var alpha = _enabled && !revealEverything ? _cells[index].Alpha : 0f;
-
-                    if (useMouse && alpha > 0f)
-                    {
-                        var centerX = bounds.Left + (column + 0.5) * bounds.Width / _columns;
-                        var deltaX = centerX - cursor.X;
-                        var deltaY = centerY - cursor.Y;
-                        var distance = Math.Sqrt(deltaX * deltaX + deltaY * deltaY);
-
-                        if (distance <= innerRadius)
-                        {
-                            alpha = 0f;
-                        }
-                        else if (feather > 0 && distance < outerRadius)
-                        {
-                            var progress = (float)((distance - innerRadius) / feather);
-                            alpha *= SmoothStep(progress);
-                        }
-                    }
-
-                    _renderAlpha[index] = alpha;
-                }
+                _renderAlpha[index] = _enabled ? _cells[index].Alpha : 0f;
             }
         }
 
         _overlay.SetMask(_renderAlpha, _columns, _rows);
     }
 
-    private static float SmoothStep(float value)
+    private void SaveExposureState()
     {
-        value = Math.Clamp(value, 0f, 1f);
-        return value * value * (3f - 2f * value);
+        float[] snapshot;
+        lock (_sync)
+        {
+            snapshot = new float[_cells.Length];
+            for (var index = 0; index < _cells.Length; index++)
+            {
+                snapshot[index] = _cells[index].ExposureSeconds;
+            }
+        }
+
+        ExposureStore.Save(_exposureIdentity, _columns, _rows, snapshot);
+    }
+
+    private float GetMaximumStoredExposureSeconds() =>
+        (float)(_settings.ExposureFullMinutes * 60.0 * 2.0);
+
+    private static float MoveTowards(float current, float target, float maximumDelta)
+    {
+        if (Math.Abs(target - current) <= maximumDelta)
+        {
+            return target;
+        }
+
+        return current + Math.Sign(target - current) * maximumDelta;
     }
 
     private static long ToStopwatchTicks(double milliseconds) =>
@@ -783,6 +916,7 @@ internal sealed class MonitorSession : IDisposable
         }
 
         _disposed = true;
+        SaveExposureState();
         _cancellation.Cancel();
         _animationTimer.Stop();
         _sampler.Dispose();
