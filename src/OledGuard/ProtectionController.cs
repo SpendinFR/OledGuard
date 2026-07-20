@@ -82,7 +82,7 @@ public sealed class ProtectionController : IDisposable
     public void SetDelaySeconds(int seconds)
     {
         var updated = Settings.Clone();
-        updated.StaticEligibilitySeconds = seconds;
+        updated.StaticDelaySeconds = seconds;
         ApplySettings(updated);
     }
 

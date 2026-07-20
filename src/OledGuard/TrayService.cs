@@ -92,12 +92,12 @@ internal sealed class TrayService : IDisposable
         _enabledItem.Checked = _controller.Enabled;
         foreach (var pair in _delayItems)
         {
-            pair.Value.Checked = pair.Key == _controller.Settings.StaticEligibilitySeconds;
+            pair.Value.Checked = pair.Key == _controller.Settings.StaticDelaySeconds;
         }
 
         _notifyIcon.Icon = _controller.Enabled ? _activeIcon : _inactiveIcon;
         _notifyIcon.Text = _controller.Enabled
-            ? $"OledGuard actif — assombrissement après {_controller.Settings.StaticEligibilitySeconds} s de stabilitÃ©"
+            ? $"OledGuard actif — assombrissement après {_controller.Settings.StaticDelaySeconds} s de stabilitÃ©"
             : "OledGuard désactivé";
     }
 
