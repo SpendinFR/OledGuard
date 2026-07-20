@@ -1013,7 +1013,7 @@ internal sealed class OverlayWindow : WpfWindow
         WindowStyle = System.Windows.WindowStyle.None;
         ResizeMode = System.Windows.ResizeMode.NoResize;
         AllowsTransparency = true;
-        Background = Brushes.Transparent;
+        Background = System.Windows.Media.Brushes.Transparent;
         Topmost = true;
         ShowInTaskbar = false;
         ShowActivated = false;
