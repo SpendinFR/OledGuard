@@ -1,5 +1,4 @@
 using System.Drawing;
-using System.Windows;
 using Forms = System.Windows.Forms;
 
 namespace OledGuard;
@@ -10,14 +9,18 @@ internal sealed class TrayService : IDisposable
     private readonly Forms.NotifyIcon _notifyIcon;
     private readonly Forms.ToolStripMenuItem _enabledItem;
     private readonly Dictionary<int, Forms.ToolStripMenuItem> _delayItems = new();
+    private readonly Icon _activeIcon;
+    private readonly Icon _inactiveIcon;
     private bool _disposed;
 
     public TrayService(ProtectionController controller)
     {
         _controller = controller;
+        _activeIcon = TrayIconFactory.Create(enabled: true);
+        _inactiveIcon = TrayIconFactory.Create(enabled: false);
 
         var menu = new Forms.ContextMenuStrip();
-        _enabledItem = new Forms.ToolStripMenuItem("Protection active")
+        _enabledItem = new Forms.ToolStripMenuItem("Protection active — Ctrl+Alt+O")
         {
             CheckOnClick = true,
             Checked = controller.Enabled
@@ -25,12 +28,12 @@ internal sealed class TrayService : IDisposable
         _enabledItem.Click += (_, _) => _controller.SetEnabled(_enabledItem.Checked);
         menu.Items.Add(_enabledItem);
 
-        var reveal = new Forms.ToolStripMenuItem("Révéler tout pendant 10 s");
+        var reveal = new Forms.ToolStripMenuItem("Révéler tout 10 s — Ctrl+Alt+R");
         reveal.Click += (_, _) => _controller.RevealAll(TimeSpan.FromSeconds(10));
         menu.Items.Add(reveal);
 
         var delayMenu = new Forms.ToolStripMenuItem("Délai avant noir");
-        foreach (var seconds in new[] { 5, 15, 30, 60 })
+        foreach (var seconds in new[] { 5, 15, 30, 60, 120 })
         {
             var item = new Forms.ToolStripMenuItem($"{seconds} secondes") { CheckOnClick = true };
             item.Click += (_, _) => _controller.SetDelaySeconds(seconds);
@@ -50,7 +53,7 @@ internal sealed class TrayService : IDisposable
 
         _notifyIcon = new Forms.NotifyIcon
         {
-            Icon = SystemIcons.Shield,
+            Icon = controller.Enabled ? _activeIcon : _inactiveIcon,
             Text = "OledGuard",
             Visible = true,
             ContextMenuStrip = menu
@@ -62,7 +65,7 @@ internal sealed class TrayService : IDisposable
             _notifyIcon.ShowBalloonTip(
                 8000,
                 "OledGuard — vérification requise",
-                "Windows n'a pas confirmé l'exclusion du masque des captures. Utilisez Windows 10 2004 ou une version plus récente et testez la révélation avant un usage prolongé.",
+                "Windows n'a pas confirmé l'exclusion du masque des captures. Testez qu'une zone noire réapparaît bien quand son contenu change.",
                 Forms.ToolTipIcon.Warning);
         }
 
@@ -91,6 +94,7 @@ internal sealed class TrayService : IDisposable
             pair.Value.Checked = pair.Key == _controller.Settings.StaticDelaySeconds;
         }
 
+        _notifyIcon.Icon = _controller.Enabled ? _activeIcon : _inactiveIcon;
         _notifyIcon.Text = _controller.Enabled
             ? $"OledGuard actif — noir après {_controller.Settings.StaticDelaySeconds} s"
             : "OledGuard désactivé";
@@ -124,5 +128,7 @@ internal sealed class TrayService : IDisposable
         _controller.SettingsChanged -= OnControllerChanged;
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
+        _activeIcon.Dispose();
+        _inactiveIcon.Dispose();
     }
 }

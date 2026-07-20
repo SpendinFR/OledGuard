@@ -1,20 +1,21 @@
 using System.Windows;
+using System.Windows.Media;
 using Button = System.Windows.Controls.Button;
 using CheckBox = System.Windows.Controls.CheckBox;
 using ComboBox = System.Windows.Controls.ComboBox;
-using VerticalAlignment = System.Windows.VerticalAlignment;
-using Orientation = System.Windows.Controls.Orientation;
-using HorizontalAlignment = System.Windows.HorizontalAlignment;
-using GridUnitType = System.Windows.GridUnitType;
-using GridLength = System.Windows.GridLength;
 using Dock = System.Windows.Controls.Dock;
 using DockPanel = System.Windows.Controls.DockPanel;
 using Grid = System.Windows.Controls.Grid;
+using GridLength = System.Windows.GridLength;
+using GridUnitType = System.Windows.GridUnitType;
+using HorizontalAlignment = System.Windows.HorizontalAlignment;
+using Orientation = System.Windows.Controls.Orientation;
 using RowDefinition = System.Windows.Controls.RowDefinition;
 using Slider = System.Windows.Controls.Slider;
 using StackPanel = System.Windows.Controls.StackPanel;
+using TextAlignment = System.Windows.TextAlignment;
 using TextBlock = System.Windows.Controls.TextBlock;
-using System.Windows.Media;
+using VerticalAlignment = System.Windows.VerticalAlignment;
 
 namespace OledGuard;
 
@@ -23,6 +24,7 @@ internal sealed class SettingsWindow : Window
     private readonly ComboBox _delay;
     private readonly ComboBox _cellSize;
     private readonly Slider _radius;
+    private readonly Slider _mouseHold;
     private readonly Slider _darkenFade;
     private readonly Slider _revealFade;
     private readonly CheckBox _startWithWindows;
@@ -30,10 +32,10 @@ internal sealed class SettingsWindow : Window
     public SettingsWindow(AppSettings settings)
     {
         Title = "OledGuard — Paramètres";
-        Width = 470;
-        Height = 500;
-        MinWidth = 430;
-        MinHeight = 460;
+        Width = 500;
+        Height = 590;
+        MinWidth = 460;
+        MinHeight = 540;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         ResizeMode = ResizeMode.CanMinimize;
         Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(245, 245, 245));
@@ -48,7 +50,7 @@ internal sealed class SettingsWindow : Window
             Text = "Protection OLED dynamique",
             FontSize = 22,
             FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 0, 0, 16)
+            Margin = new Thickness(0, 0, 0, 12)
         };
         Grid.SetRow(heading, 0);
         root.Children.Add(heading);
@@ -57,9 +59,10 @@ internal sealed class SettingsWindow : Window
         Grid.SetRow(form, 1);
         root.Children.Add(form);
 
-        _delay = AddCombo(form, "Délai avant noir", new[] { 5, 15, 30, 60, 120 }, settings.StaticDelaySeconds, "secondes");
-        _cellSize = AddCombo(form, "Taille des zones", new[] { 32, 48, 64, 96, 128 }, settings.CellSizePixels, "pixels");
-        _radius = AddSlider(form, "Rayon de révélation de la souris", 80, 360, settings.MouseRevealRadiusPixels, "px");
+        _delay = AddCombo(form, "Délai avant passage au noir", new[] { 5, 15, 30, 60, 120 }, settings.StaticDelaySeconds, "secondes");
+        _cellSize = AddCombo(form, "Finesse du masque", new[] { 16, 20, 24, 32, 48 }, settings.CellSizePixels, "pixels par zone");
+        _radius = AddSlider(form, "Rayon révélé autour de la souris", 80, 360, settings.MouseRevealRadiusPixels, "px");
+        _mouseHold = AddSlider(form, "Durée visible après passage de la souris", 5, 60, settings.MouseRevealHoldMilliseconds / 1000.0, "s");
         _revealFade = AddSlider(form, "Fondu vers visible", 40, 500, settings.RevealFadeMilliseconds, "ms");
         _darkenFade = AddSlider(form, "Fondu vers le noir", 200, 2500, settings.DarkenFadeMilliseconds, "ms");
 
@@ -67,17 +70,17 @@ internal sealed class SettingsWindow : Window
         {
             Content = "Démarrer avec Windows",
             IsChecked = settings.StartWithWindows,
-            Margin = new Thickness(0, 18, 0, 0),
+            Margin = new Thickness(0, 16, 0, 0),
             FontSize = 14
         };
         form.Children.Add(_startWithWindows);
 
         var note = new TextBlock
         {
-            Text = "30 s est le réglage conseillé. Une zone qui change redevient visible immédiatement. Ctrl+Alt+O active/désactive ; Ctrl+Alt+R révèle tout pendant 10 s.",
+            Text = "Réglage conseillé : noir après 30 s, finesse 16 px, maintien souris 30 s. Une zone qui bouge redevient visible immédiatement et son délai repart de zéro. Ctrl+Alt+O active/désactive ; Ctrl+Alt+R révèle tout pendant 10 s.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = System.Windows.Media.Brushes.DimGray,
-            Margin = new Thickness(0, 18, 0, 0)
+            Margin = new Thickness(0, 16, 0, 0)
         };
         form.Children.Add(note);
 
@@ -90,12 +93,32 @@ internal sealed class SettingsWindow : Window
         Grid.SetRow(buttons, 2);
         root.Children.Add(buttons);
 
-        var cancel = new Button { Content = "Annuler", MinWidth = 90, Margin = new Thickness(0, 0, 10, 0), Padding = new Thickness(12, 7, 12, 7) };
-        cancel.Click += (_, _) => { DialogResult = false; Close(); };
+        var cancel = new Button
+        {
+            Content = "Annuler",
+            MinWidth = 90,
+            Margin = new Thickness(0, 0, 10, 0),
+            Padding = new Thickness(12, 7, 12, 7)
+        };
+        cancel.Click += (_, _) =>
+        {
+            DialogResult = false;
+            Close();
+        };
         buttons.Children.Add(cancel);
 
-        var save = new Button { Content = "Enregistrer", MinWidth = 110, IsDefault = true, Padding = new Thickness(12, 7, 12, 7) };
-        save.Click += (_, _) => { DialogResult = true; Close(); };
+        var save = new Button
+        {
+            Content = "Enregistrer",
+            MinWidth = 110,
+            IsDefault = true,
+            Padding = new Thickness(12, 7, 12, 7)
+        };
+        save.Click += (_, _) =>
+        {
+            DialogResult = true;
+            Close();
+        };
         buttons.Children.Add(save);
 
         Content = root;
@@ -107,6 +130,7 @@ internal sealed class SettingsWindow : Window
         updated.StaticDelaySeconds = (int)_delay.SelectedItem;
         updated.CellSizePixels = (int)_cellSize.SelectedItem;
         updated.MouseRevealRadiusPixels = (int)Math.Round(_radius.Value);
+        updated.MouseRevealHoldMilliseconds = (int)Math.Round(_mouseHold.Value * 1000.0);
         updated.RevealFadeMilliseconds = (int)Math.Round(_revealFade.Value);
         updated.DarkenFadeMilliseconds = (int)Math.Round(_darkenFade.Value);
         updated.StartWithWindows = _startWithWindows.IsChecked == true;
@@ -116,37 +140,68 @@ internal sealed class SettingsWindow : Window
 
     private static ComboBox AddCombo(StackPanel parent, string label, int[] values, int selected, string suffix)
     {
-        parent.Children.Add(new TextBlock { Text = label, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 10, 0, 5) });
-        var combo = new ComboBox { Width = 180, HorizontalAlignment = HorizontalAlignment.Left };
+        parent.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 9, 0, 5)
+        });
+
+        var combo = new ComboBox
+        {
+            Width = 190,
+            HorizontalAlignment = HorizontalAlignment.Left
+        };
+
         foreach (var value in values)
         {
             combo.Items.Add(value);
         }
-        combo.SelectedItem = values.Contains(selected) ? selected : values.OrderBy(value => Math.Abs(value - selected)).First();
+
+        combo.SelectedItem = values.Contains(selected)
+            ? selected
+            : values.OrderBy(value => Math.Abs(value - selected)).First();
+
         parent.Children.Add(combo);
-        parent.Children.Add(new TextBlock { Text = suffix, Foreground = System.Windows.Media.Brushes.Gray, Margin = new Thickness(190, -25, 0, 8) });
+        parent.Children.Add(new TextBlock
+        {
+            Text = suffix,
+            Foreground = System.Windows.Media.Brushes.Gray,
+            Margin = new Thickness(200, -25, 0, 8)
+        });
         return combo;
     }
 
     private static Slider AddSlider(StackPanel parent, string label, double minimum, double maximum, double value, string suffix)
     {
-        var title = new TextBlock { Text = label, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 12, 0, 3) };
-        parent.Children.Add(title);
+        parent.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 10, 0, 3)
+        });
+
         var panel = new DockPanel();
-        var valueText = new TextBlock { Width = 70, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
+        var valueText = new TextBlock
+        {
+            Width = 76,
+            TextAlignment = TextAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center
+        };
         DockPanel.SetDock(valueText, Dock.Right);
         panel.Children.Add(valueText);
+
         var slider = new Slider
         {
             Minimum = minimum,
             Maximum = maximum,
-            Value = value,
+            Value = Math.Clamp(value, minimum, maximum),
             TickFrequency = Math.Max(1, (maximum - minimum) / 10),
             IsSnapToTickEnabled = false,
             Margin = new Thickness(0, 0, 12, 0)
         };
         slider.ValueChanged += (_, _) => valueText.Text = $"{Math.Round(slider.Value)} {suffix}";
-        valueText.Text = $"{Math.Round(value)} {suffix}";
+        valueText.Text = $"{Math.Round(slider.Value)} {suffix}";
         panel.Children.Add(slider);
         parent.Children.Add(panel);
         return slider;
