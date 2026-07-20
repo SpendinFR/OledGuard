@@ -10,7 +10,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>OledGuard</AssemblyName>
     <RootNamespace>OledGuard</RootNamespace>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Product>OledGuard</Product>
     <Description>Protection dynamique des zones statiques pour écrans OLED.</Description>
     <Authors>OledGuard contributors</Authors>
