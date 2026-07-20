@@ -1,0 +1,37 @@
+name: Build Windows executable
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish OledGuard
+        shell: pwsh
+        run: |
+          dotnet publish .\src\OledGuard\OledGuard.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:PublishReadyToRun=true `
+            -p:DebugType=None `
+            -p:DebugSymbols=false `
+            -o .\dist\OledGuard
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: OledGuard-win-x64
+          path: dist/OledGuard/**
