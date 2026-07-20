@@ -5,42 +5,44 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 10;
+    public const int CurrentSchemaVersion = 11;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
 
-    // A meaningful content region stays visible for this long after its last change.
+    // A foreground window starts fully visible. Static zones begin to dim after
+    // this grace period and then fade uniformly by coarse zones.
     public int StaticDelaySeconds { get; set; } = 30;
+    public int StaticFadeSeconds { get; set; } = 20;
+    public double MaximumStaticOpacity { get; set; } = 0.94;
 
-    // A newly focused or moved foreground window is briefly revealed so the user
-    // immediately understands where the current working area is.
-    public int WindowRevealSeconds { get; set; } = 5;
-
-    // Low-resolution analysis grid. No full-resolution desktop frame is retained.
-    public int CellSizePixels { get; set; } = 24;
+    // Low-resolution analysis. On a 4K monitor this is roughly 360 x 204 BGRA
+    // with the defaults, so the working buffers remain tiny.
+    public int CellSizePixels { get; set; } = 32;
     public int SamplesPerCell { get; set; } = 3;
-    public int VisibleSamplingMilliseconds { get; set; } = 900;
+    public int StaticZoneSpanCells { get; set; } = 2;
+    public int VisibleSamplingMilliseconds { get; set; } = 750;
     public int MaskedSamplingMilliseconds { get; set; } = 250;
 
-    // Temporal fades.
-    public int DarkenFadeMilliseconds { get; set; } = 2600;
-    public int RevealFadeMilliseconds { get; set; } = 100;
+    // Window and temporal transitions.
+    public int WindowEdgeFeatherPixels { get; set; } = 20;
+    public int DarkenFadeMilliseconds { get; set; } = 1800;
+    public int RevealFadeMilliseconds { get; set; } = 120;
 
-    // Crisp square spatial gradient around active content.
-    public int ContentCoreCells { get; set; } = 1;
-    public int ContentFeatherCells { get; set; } = 5;
-    public int GradientSteps { get; set; } = 7;
-    public int ContentActivationPaddingCells { get; set; } = 1;
-
-    // Ignore tiny isolated animations such as one blinking indicator.
-    public int MinimumActivityComponentCells { get; set; } = 2;
-
-    // Mouse discovery is independent of the foreground window and can reveal any
-    // black area without moving focus.
-    public int MouseCoreRadiusPixels { get; set; } = 48;
-    public int MouseFeatherCells { get; set; } = 4;
+    // Mouse reveal keeps the original smooth, circular trail behaviour. The
+    // overlay remains click-through; the mouse only changes the protection map.
+    public int MouseRevealRadiusPixels { get; set; } = 72;
+    public int MouseRevealFeatherPixels { get; set; } = 72;
     public int MouseRevealHoldMilliseconds { get; set; } = 30_000;
+    public int MouseStampDistancePixels { get; set; } = 10;
+
+    // A moving dark graphite band gives continuously active pixels a brief rest.
+    // It never adds light or colour, which is safer for OLED than a bright sweep.
+    public bool RestSweepEnabled { get; set; } = true;
+    public int RestSweepIntervalSeconds { get; set; } = 90;
+    public int RestSweepDurationSeconds { get; set; } = 7;
+    public int RestSweepWidthPixels { get; set; } = 260;
+    public double RestSweepOpacity { get; set; } = 0.28;
 
     // Change detector thresholds.
     public double DifferenceThreshold { get; set; } = 3.0;
@@ -48,15 +50,6 @@ public sealed class AppSettings
     public double StrongDifferenceThreshold { get; set; } = 9.0;
     public double StrongChangedSampleFraction { get; set; } = 0.24;
     public int WeakChangeConfirmationSamples { get; set; } = 2;
-
-    // A moving black rest band periodically gives even continuously changing
-    // pixels a short dark pause. It only increases black opacity; it never emits
-    // extra colour or brightness.
-    public bool RestCycleEnabled { get; set; } = true;
-    public int RestCycleIntervalSeconds { get; set; } = 120;
-    public int RestCycleDurationMilliseconds { get; set; } = 7000;
-    public int RestCycleBandCells { get; set; } = 6;
-    public double RestCycleStrength { get; set; } = 0.92;
 
     public bool StartWithWindows { get; set; }
 
@@ -69,35 +62,31 @@ public sealed class AppSettings
             return;
         }
 
-        // V1 resets experimental visual parameters while preserving the enabled
-        // state and startup preference. This avoids carrying prototype halos and
-        // rectangle modes into the stable engine.
         StaticDelaySeconds = 30;
-        WindowRevealSeconds = 5;
-        CellSizePixels = 24;
+        StaticFadeSeconds = 20;
+        MaximumStaticOpacity = 0.94;
+        CellSizePixels = 32;
         SamplesPerCell = 3;
-        VisibleSamplingMilliseconds = 900;
+        StaticZoneSpanCells = 2;
+        VisibleSamplingMilliseconds = 750;
         MaskedSamplingMilliseconds = 250;
-        DarkenFadeMilliseconds = 2600;
-        RevealFadeMilliseconds = 100;
-        ContentCoreCells = 1;
-        ContentFeatherCells = 5;
-        GradientSteps = 7;
-        ContentActivationPaddingCells = 1;
-        MinimumActivityComponentCells = 2;
-        MouseCoreRadiusPixels = 48;
-        MouseFeatherCells = 4;
+        WindowEdgeFeatherPixels = 20;
+        DarkenFadeMilliseconds = 1800;
+        RevealFadeMilliseconds = 120;
+        MouseRevealRadiusPixels = 72;
+        MouseRevealFeatherPixels = 72;
         MouseRevealHoldMilliseconds = 30_000;
+        MouseStampDistancePixels = 10;
+        RestSweepEnabled = true;
+        RestSweepIntervalSeconds = 90;
+        RestSweepDurationSeconds = 7;
+        RestSweepWidthPixels = 260;
+        RestSweepOpacity = 0.28;
         DifferenceThreshold = 3.0;
         ChangedSampleFraction = 0.10;
         StrongDifferenceThreshold = 9.0;
         StrongChangedSampleFraction = 0.24;
         WeakChangeConfirmationSamples = 2;
-        RestCycleEnabled = true;
-        RestCycleIntervalSeconds = 120;
-        RestCycleDurationMilliseconds = 7000;
-        RestCycleBandCells = 6;
-        RestCycleStrength = 0.92;
         SchemaVersion = CurrentSchemaVersion;
     }
 
@@ -105,30 +94,29 @@ public sealed class AppSettings
     {
         SchemaVersion = CurrentSchemaVersion;
         StaticDelaySeconds = Math.Clamp(StaticDelaySeconds, 5, 600);
-        WindowRevealSeconds = Math.Clamp(WindowRevealSeconds, 1, 30);
-        CellSizePixels = Math.Clamp(CellSizePixels, 16, 64);
-        SamplesPerCell = Math.Clamp(SamplesPerCell, 2, 5);
-        VisibleSamplingMilliseconds = Math.Clamp(VisibleSamplingMilliseconds, 250, 5000);
-        MaskedSamplingMilliseconds = Math.Clamp(MaskedSamplingMilliseconds, 100, 2000);
-        DarkenFadeMilliseconds = Math.Clamp(DarkenFadeMilliseconds, 300, 10_000);
-        RevealFadeMilliseconds = Math.Clamp(RevealFadeMilliseconds, 40, 1000);
-        ContentCoreCells = Math.Clamp(ContentCoreCells, 0, 4);
-        ContentFeatherCells = Math.Clamp(ContentFeatherCells, 1, 12);
-        GradientSteps = Math.Clamp(GradientSteps, 3, 16);
-        ContentActivationPaddingCells = Math.Clamp(ContentActivationPaddingCells, 0, 4);
-        MinimumActivityComponentCells = Math.Clamp(MinimumActivityComponentCells, 1, 12);
-        MouseCoreRadiusPixels = Math.Clamp(MouseCoreRadiusPixels, 16, 240);
-        MouseFeatherCells = Math.Clamp(MouseFeatherCells, 1, 12);
+        StaticFadeSeconds = Math.Clamp(StaticFadeSeconds, 1, 180);
+        MaximumStaticOpacity = Math.Clamp(MaximumStaticOpacity, 0.50, 1.0);
+        CellSizePixels = Math.Clamp(CellSizePixels, 24, 96);
+        SamplesPerCell = Math.Clamp(SamplesPerCell, 2, 6);
+        StaticZoneSpanCells = Math.Clamp(StaticZoneSpanCells, 1, 4);
+        VisibleSamplingMilliseconds = Math.Clamp(VisibleSamplingMilliseconds, 250, 10_000);
+        MaskedSamplingMilliseconds = Math.Clamp(MaskedSamplingMilliseconds, 100, 5_000);
+        WindowEdgeFeatherPixels = Math.Clamp(WindowEdgeFeatherPixels, 0, 96);
+        DarkenFadeMilliseconds = Math.Clamp(DarkenFadeMilliseconds, 250, 10_000);
+        RevealFadeMilliseconds = Math.Clamp(RevealFadeMilliseconds, 40, 2_000);
+        MouseRevealRadiusPixels = Math.Clamp(MouseRevealRadiusPixels, 16, 240);
+        MouseRevealFeatherPixels = Math.Clamp(MouseRevealFeatherPixels, 0, 240);
         MouseRevealHoldMilliseconds = Math.Clamp(MouseRevealHoldMilliseconds, 0, 120_000);
+        MouseStampDistancePixels = Math.Clamp(MouseStampDistancePixels, 2, 48);
+        RestSweepIntervalSeconds = Math.Clamp(RestSweepIntervalSeconds, 20, 600);
+        RestSweepDurationSeconds = Math.Clamp(RestSweepDurationSeconds, 2, 30);
+        RestSweepWidthPixels = Math.Clamp(RestSweepWidthPixels, 64, 800);
+        RestSweepOpacity = Math.Clamp(RestSweepOpacity, 0.05, 0.60);
         DifferenceThreshold = Math.Clamp(DifferenceThreshold, 0.5, 50.0);
         ChangedSampleFraction = Math.Clamp(ChangedSampleFraction, 0.01, 1.0);
         StrongDifferenceThreshold = Math.Clamp(StrongDifferenceThreshold, DifferenceThreshold, 100.0);
         StrongChangedSampleFraction = Math.Clamp(StrongChangedSampleFraction, ChangedSampleFraction, 1.0);
         WeakChangeConfirmationSamples = Math.Clamp(WeakChangeConfirmationSamples, 1, 5);
-        RestCycleIntervalSeconds = Math.Clamp(RestCycleIntervalSeconds, 20, 900);
-        RestCycleDurationMilliseconds = Math.Clamp(RestCycleDurationMilliseconds, 1500, 20_000);
-        RestCycleBandCells = Math.Clamp(RestCycleBandCells, 2, 20);
-        RestCycleStrength = Math.Clamp(RestCycleStrength, 0.10, 1.0);
     }
 }
 

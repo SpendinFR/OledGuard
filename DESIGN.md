@@ -1,54 +1,32 @@
-# OledGuard V1 — architecture
+# Architecture V1.1
 
-## Règle principale
+## 1. Géométrie de la fenêtre active
 
-Le noir est l’état par défaut. Deux sources seulement peuvent retirer localement le masque :
+`GetForegroundWindow` identifie la fenêtre au premier plan. `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)` fournit ses limites visibles. La fenêtre propriétaire est réunie avec une boîte de dialogue éventuelle. Les fenêtres du bureau et de la barre des tâches sont exclues.
 
-1. une activité significative située dans la fenêtre au premier plan ;
-2. la zone de découverte autour de la souris.
+Chaque moniteur calcule l'intersection entre cette géométrie et sa propre surface. En dehors de cette intersection, l'alpha cible est noir.
 
-Les changements derrière la fenêtre au premier plan ne révèlent rien.
+## 2. Analyse statique
 
-## Fenêtre au premier plan
+La capture GDI est immédiatement réduite. Les cellules de 32 px sont regroupées par blocs de 2 × 2, donc une zone statique représente environ 64 × 64 px. Une modification significative remet à zéro l'âge du bloc entier. Les changements isolés sans voisin sont ignorés pour éviter qu'un curseur clignotant maintienne une grande zone visible.
 
-`GetForegroundWindow` fournit le handle actif. `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)` fournit ses limites visibles, avec `GetWindowRect` en secours.
+Après le délai de grâce, l'opacité du bloc évolue avec une courbe smoothstep jusqu'à l'opacité statique maximale.
 
-À chaque changement de fenêtre ou déplacement important :
+## 3. Révélation de la souris
 
-- l’ancien historique d’activité est supprimé ;
-- la nouvelle fenêtre est révélée quelques secondes ;
-- l’analyse locale reprend ensuite.
+Le pointeur applique des tampons circulaires sur la petite grille. Le centre devient totalement transparent et le bord utilise un dégradé. Chaque partie du chemin conserve sa propre expiration, ce qui crée une traînée naturelle sans calculer une texture 4K.
 
-## Détection d’activité
+## 4. Balayage de repos
 
-La capture GDI est directement réduite. Chaque cellule contient 3 × 3 échantillons par défaut. Deux images réduites sont comparées :
+Toutes les 90 secondes par défaut, une bande noire à bord progressif traverse la fenêtre active pendant 7 secondes. Elle est combinée avec le masque existant par maximum d'opacité. Le balayage ne prétend pas régénérer la dalle : il réduit seulement momentanément l'émission des pixels continuellement actifs.
 
-- les faibles changements demandent confirmation ;
-- les cellules modifiées sont regroupées en composantes connexes ;
-- une composante trop petite est ignorée ;
-- une composante acceptée active son rectangle englobant avec une petite marge.
+## 5. Mémoire
 
-## Rendu
+Le moteur conserve seulement :
 
-Deux champs de distance de Chebyshev sont calculés :
+- deux images BGRA réduites ;
+- une carte de cellules ;
+- une carte de zones ;
+- une petite carte alpha 2× interpolée par WPF.
 
-- activité de contenu, coupée aux limites de la fenêtre au premier plan ;
-- activité de la souris, autorisée partout.
-
-La distance de Chebyshev produit des contours carrés. L’opacité est quantifiée en plusieurs niveaux : transparent, gris sombres, noir. La texture est agrandie en nearest-neighbour, donc sans flou spatial. Le fondu reste temporel et fluide.
-
-## Balayage de repos
-
-À intervalle configurable, une bande noire légèrement diagonale traverse la zone visible de la fenêtre au premier plan. Elle n’éclaircit jamais l’image et n’emploie aucune couleur. Le passage est calculé sur la petite grille et ne requiert aucune texture supplémentaire pleine résolution.
-
-## Budget mémoire
-
-Pour un écran 4K, cellule 24 px et 3 échantillons :
-
-- grille : environ 160 × 90 cellules ;
-- capture réduite : environ 480 × 270 × 4 octets ;
-- image précédente : même taille ;
-- carte alpha : environ 160 × 90 × 4 octets ;
-- tableaux de travail : nettement moins de 1 Mo.
-
-La dépense dominante est la surface transparente gérée par WPF/DWM, généralement de l’ordre d’une à deux surfaces 4K. Objectif : moins de 100 Mo par écran 4K.
+Le coût dominant éventuel reste le tampon de composition de la fenêtre transparente, contrôlé par Windows et le pilote.

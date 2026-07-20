@@ -6,10 +6,9 @@ using WpfImage = System.Windows.Controls.Image;
 namespace OledGuard;
 
 /// <summary>
-/// Renders a very small black-alpha map stretched over the monitor. The source
-/// map is one pixel per analysis cell, so OledGuard never stores a 4K frame for
-/// the overlay. Nearest-neighbour scaling preserves the deliberate square rings;
-/// temporal animation provides the smooth fade without spatial blur.
+/// Renders the protection map as a tiny alpha bitmap stretched over the monitor.
+/// The bitmap stays small (roughly one pixel per 16 screen pixels), and WPF lets
+/// the GPU scale it smoothly instead of drawing thousands of visible rectangles.
 /// </summary>
 internal sealed class MaskSurface : WpfImage
 {
@@ -25,8 +24,8 @@ internal sealed class MaskSurface : WpfImage
         Stretch = Stretch.Fill;
         HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
         VerticalAlignment = System.Windows.VerticalAlignment.Stretch;
-        RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.NearestNeighbor);
-        RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);
+        RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.Linear);
+        RenderOptions.SetEdgeMode(this, EdgeMode.Unspecified);
     }
 
     public void UpdateMask(float[] alpha, int columns, int rows)

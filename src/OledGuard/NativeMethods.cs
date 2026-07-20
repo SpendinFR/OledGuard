@@ -28,7 +28,9 @@ internal static class NativeMethods
     public const uint VkO = 0x4F;
     public const uint VkR = 0x52;
 
+    public const uint GaRootOwner = 3;
     public const int DwmwaExtendedFrameBounds = 9;
+    public const int DwmwaCloaked = 14;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct Point
@@ -44,6 +46,10 @@ internal static class NativeMethods
         public int Top;
         public int Right;
         public int Bottom;
+
+        public readonly int Width => Math.Max(0, Right - Left);
+        public readonly int Height => Math.Max(0, Bottom - Top);
+        public readonly bool IsEmpty => Width <= 0 || Height <= 0;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -81,25 +87,38 @@ internal static class NativeMethods
     public static extern IntPtr GetForegroundWindow();
 
     [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool IsWindowVisible(IntPtr hWnd);
+    public static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool IsIconic(IntPtr hWnd);
+    public static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
 
-    [DllImport("user32.dll", SetLastError = true)]
+    [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool GetWindowRect(IntPtr hWnd, out Rect rect);
+    public static extern bool IsWindowVisible(IntPtr hwnd);
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    public static extern int GetClassName(IntPtr hWnd, StringBuilder className, int maxCount);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsIconic(IntPtr hwnd);
 
-    [DllImport("dwmapi.dll", PreserveSig = true)]
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hwnd, StringBuilder className, int maxCount);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+
+    [DllImport("dwmapi.dll")]
     public static extern int DwmGetWindowAttribute(
-        IntPtr hWnd,
+        IntPtr hwnd,
         int attribute,
         out Rect value,
+        int valueSize);
+
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmGetWindowAttribute(
+        IntPtr hwnd,
+        int attribute,
+        out int value,
         int valueSize);
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -185,6 +204,15 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool DestroyIcon(IntPtr hIcon);
+
+
+    public static string GetWindowClassName(IntPtr hwnd)
+    {
+        var builder = new StringBuilder(256);
+        return GetClassName(hwnd, builder, builder.Capacity) > 0
+            ? builder.ToString()
+            : string.Empty;
+    }
 
     public static void TryEnablePerMonitorDpiAwareness()
     {
