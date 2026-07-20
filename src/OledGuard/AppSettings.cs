@@ -5,33 +5,46 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 4;
 
     // Keep zero as the deserialization default so older settings files without
     // SchemaVersion are migrated instead of silently keeping prototype values.
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
+
+    // A changed or mouse-revealed area remains active for this long.
     public int StaticDelaySeconds { get; set; } = 30;
-    public int CellSizePixels { get; set; } = 16;
+
+    // Detection grid. The rendered mask is internally upscaled and interpolated,
+    // so this value controls analysis cost rather than visible square size.
+    public int CellSizePixels { get; set; } = 32;
     public int SamplesPerCell { get; set; } = 3;
     public int VisibleSamplingMilliseconds { get; set; } = 1000;
     public int MaskedSamplingMilliseconds { get; set; } = 250;
-    public int DarkenFadeMilliseconds { get; set; } = 900;
-    public int RevealFadeMilliseconds { get; set; } = 120;
-    public int MouseRevealRadiusPixels { get; set; } = 170;
-    public int MouseRevealHoldMilliseconds { get; set; } = 30_000;
-    public int ContentRevealPaddingCells { get; set; } = 1;
-    public int ContentRevealHoldMilliseconds { get; set; } = 1200;
 
-    // Weak changes need confirmation so tiny rendering noise does not punch
-    // permanent pinholes in an otherwise static image.
+    // Temporal transitions.
+    public int DarkenFadeMilliseconds { get; set; } = 5000;
+    public int RevealFadeMilliseconds { get; set; } = 140;
+
+    // Spatial shape of the visible island around recent activity.
+    public int ActivityCoreRadiusPixels { get; set; } = 110;
+    public int ActivityFeatherRadiusPixels { get; set; } = 220;
+    public int ContentActivationPaddingCells { get; set; } = 1;
+
+    // Mouse behaviour. The mouse directly activates this radius, then the common
+    // core and feather are added around it by the distance-field renderer.
+    public int MouseRevealRadiusPixels { get; set; } = 120;
+    public int MouseRevealHoldMilliseconds { get; set; } = 30_000;
+
+    // Change detector thresholds. Weak changes need confirmation so tiny rendering
+    // noise does not keep isolated pinholes visible.
     public double DifferenceThreshold { get; set; } = 3.0;
     public double ChangedSampleFraction { get; set; } = 0.10;
     public double StrongDifferenceThreshold { get; set; } = 9.0;
     public double StrongChangedSampleFraction { get; set; } = 0.24;
     public int WeakChangeConfirmationSamples { get; set; } = 2;
 
-    public bool StartWithWindows { get; set; } = false;
+    public bool StartWithWindows { get; set; }
 
     public AppSettings Clone() => (AppSettings)MemberwiseClone();
 
@@ -42,18 +55,20 @@ public sealed class AppSettings
             return;
         }
 
-        // v3 replaces the coarse prototype mask with a denser grid, smoother
-        // rendering, robust noise handling, and a 30-second mouse reveal hold.
-        CellSizePixels = 16;
+        // v4 abandons independent dark squares. It renders a continuous activity
+        // field: recent activity stays clear, the surroundings fade smoothly, and
+        // distant inactive areas become fully black.
+        CellSizePixels = 32;
         SamplesPerCell = 3;
         VisibleSamplingMilliseconds = 1000;
         MaskedSamplingMilliseconds = 250;
-        DarkenFadeMilliseconds = 900;
-        RevealFadeMilliseconds = 120;
-        MouseRevealRadiusPixels = 170;
+        DarkenFadeMilliseconds = 5000;
+        RevealFadeMilliseconds = 140;
+        ActivityCoreRadiusPixels = 110;
+        ActivityFeatherRadiusPixels = 220;
+        ContentActivationPaddingCells = 1;
+        MouseRevealRadiusPixels = 120;
         MouseRevealHoldMilliseconds = 30_000;
-        ContentRevealPaddingCells = 1;
-        ContentRevealHoldMilliseconds = 1200;
         DifferenceThreshold = 3.0;
         ChangedSampleFraction = 0.10;
         StrongDifferenceThreshold = 9.0;
@@ -66,16 +81,17 @@ public sealed class AppSettings
     {
         SchemaVersion = CurrentSchemaVersion;
         StaticDelaySeconds = Math.Clamp(StaticDelaySeconds, 5, 600);
-        CellSizePixels = Math.Clamp(CellSizePixels, 12, 96);
+        CellSizePixels = Math.Clamp(CellSizePixels, 20, 96);
         SamplesPerCell = Math.Clamp(SamplesPerCell, 2, 6);
         VisibleSamplingMilliseconds = Math.Clamp(VisibleSamplingMilliseconds, 250, 10_000);
         MaskedSamplingMilliseconds = Math.Clamp(MaskedSamplingMilliseconds, 100, 5_000);
-        DarkenFadeMilliseconds = Math.Clamp(DarkenFadeMilliseconds, 100, 5_000);
+        DarkenFadeMilliseconds = Math.Clamp(DarkenFadeMilliseconds, 500, 15_000);
         RevealFadeMilliseconds = Math.Clamp(RevealFadeMilliseconds, 40, 2_000);
-        MouseRevealRadiusPixels = Math.Clamp(MouseRevealRadiusPixels, 60, 500);
+        ActivityCoreRadiusPixels = Math.Clamp(ActivityCoreRadiusPixels, 32, 400);
+        ActivityFeatherRadiusPixels = Math.Clamp(ActivityFeatherRadiusPixels, 32, 600);
+        ContentActivationPaddingCells = Math.Clamp(ContentActivationPaddingCells, 0, 4);
+        MouseRevealRadiusPixels = Math.Clamp(MouseRevealRadiusPixels, 32, 500);
         MouseRevealHoldMilliseconds = Math.Clamp(MouseRevealHoldMilliseconds, 0, 120_000);
-        ContentRevealPaddingCells = Math.Clamp(ContentRevealPaddingCells, 0, 3);
-        ContentRevealHoldMilliseconds = Math.Clamp(ContentRevealHoldMilliseconds, 0, 10_000);
         DifferenceThreshold = Math.Clamp(DifferenceThreshold, 0.5, 50.0);
         ChangedSampleFraction = Math.Clamp(ChangedSampleFraction, 0.01, 1.0);
         StrongDifferenceThreshold = Math.Clamp(StrongDifferenceThreshold, DifferenceThreshold, 100.0);

@@ -15,8 +15,7 @@ internal sealed class MonitorSession : IDisposable
 
     private sealed class Cell
     {
-        public long StableSinceTicks;
-        public long RevealUntilTicks;
+        public long ActiveUntilTicks;
         public float Alpha;
         public float TargetAlpha;
         public byte WeakChangeStreak;
@@ -33,9 +32,14 @@ internal sealed class MonitorSession : IDisposable
     private readonly int _sampleWidth;
     private readonly int _sampleHeight;
     private readonly int _sampleStride;
+    private readonly int _renderColumns;
+    private readonly int _renderRows;
     private readonly byte[] _previous;
     private readonly bool[] _changedCells;
-    private readonly float[] _rawRenderAlpha;
+    private readonly bool[] _activeCells;
+    private readonly bool[] _closedActiveCells;
+    private readonly float[] _distance;
+    private readonly float[] _cellAlpha;
     private readonly float[] _renderAlpha;
     private readonly object _sync = new();
     private readonly DispatcherTimer _animationTimer;
@@ -62,11 +66,20 @@ internal sealed class MonitorSession : IDisposable
         _sampleHeight = _rows * _samplesPerCell;
         _sampleStride = _sampleWidth * 4;
 
+        // The activity grid stays inexpensive. A 2x render map hides the grid and
+        // gives WPF enough samples to interpolate a continuous, natural gradient.
+        _renderColumns = _columns * 2;
+        _renderRows = _rows * 2;
+
+        var cellCount = checked(_columns * _rows);
         _previous = new byte[checked(_sampleStride * _sampleHeight)];
-        _cells = Enumerable.Range(0, checked(_columns * _rows)).Select(_ => new Cell()).ToArray();
-        _changedCells = new bool[_cells.Length];
-        _rawRenderAlpha = new float[_cells.Length];
-        _renderAlpha = new float[_cells.Length];
+        _cells = Enumerable.Range(0, cellCount).Select(_ => new Cell()).ToArray();
+        _changedCells = new bool[cellCount];
+        _activeCells = new bool[cellCount];
+        _closedActiveCells = new bool[cellCount];
+        _distance = new float[cellCount];
+        _cellAlpha = new float[cellCount];
+        _renderAlpha = new float[checked(_renderColumns * _renderRows)];
 
         _overlay = new OverlayWindow(screen);
         _sampler = new ScreenSampler(bounds, _sampleWidth, _sampleHeight);
@@ -94,17 +107,14 @@ internal sealed class MonitorSession : IDisposable
         {
             _enabled = enabled;
             var now = Stopwatch.GetTimestamp();
+            var initialUntil = now + ToStopwatchTicks(_settings.StaticDelaySeconds * 1000.0);
 
             foreach (var cell in _cells)
             {
-                cell.StableSinceTicks = now;
-                cell.RevealUntilTicks = now;
+                cell.ActiveUntilTicks = enabled ? initialUntil : now;
                 cell.WeakChangeStreak = 0;
                 cell.TargetAlpha = 0;
-                if (!enabled)
-                {
-                    cell.Alpha = 0;
-                }
+                cell.Alpha = 0;
             }
 
             _maskDirty = true;
@@ -118,10 +128,6 @@ internal sealed class MonitorSession : IDisposable
         lock (_sync)
         {
             _revealAllUntilTicks = Stopwatch.GetTimestamp() + ToStopwatchTicks(duration.TotalMilliseconds);
-            foreach (var cell in _cells)
-            {
-                cell.TargetAlpha = 0;
-            }
             _maskDirty = true;
         }
     }
@@ -138,7 +144,7 @@ internal sealed class MonitorSession : IDisposable
                 lock (_sync)
                 {
                     shouldCapture = _enabled;
-                    if (_cells.Any(cell => cell.Alpha > 0.05f || cell.TargetAlpha > 0.05f))
+                    if (_cells.Any(cell => cell.Alpha > 0.03f || cell.TargetAlpha > 0.03f))
                     {
                         delay = _settings.MaskedSamplingMilliseconds;
                     }
@@ -177,10 +183,6 @@ internal sealed class MonitorSession : IDisposable
             {
                 Buffer.BlockCopy(current, 0, _previous, 0, current.Length);
                 _hasPrevious = true;
-                foreach (var cell in _cells)
-                {
-                    cell.StableSinceTicks = now;
-                }
                 return;
             }
 
@@ -217,6 +219,7 @@ internal sealed class MonitorSession : IDisposable
                 }
             }
 
+            var anyChanged = false;
             for (var index = 0; index < _changedCells.Length; index++)
             {
                 if (!_changedCells[index])
@@ -224,7 +227,13 @@ internal sealed class MonitorSession : IDisposable
                     continue;
                 }
 
-                RevealChangedArea(index / _columns, index % _columns, now);
+                anyChanged = true;
+                ActivateChangedArea(index / _columns, index % _columns, now);
+            }
+
+            if (anyChanged)
+            {
+                _maskDirty = true;
             }
 
             Buffer.BlockCopy(current, 0, _previous, 0, current.Length);
@@ -271,9 +280,6 @@ internal sealed class MonitorSession : IDisposable
         var changedFraction = changedSamples / (double)sampleCount;
         var strongFraction = strongSamples / (double)sampleCount;
 
-        // A real text redraw, scroll, animation, or image change normally contains
-        // at least one clearly changed sample. This reveals it immediately while
-        // low-level dithering/noise is handled by the weak path below.
         if (maximumDifference >= _settings.StrongDifferenceThreshold * 1.8 ||
             meanDifference >= _settings.StrongDifferenceThreshold ||
             strongFraction >= _settings.StrongChangedSampleFraction)
@@ -290,27 +296,18 @@ internal sealed class MonitorSession : IDisposable
         return ChangeKind.None;
     }
 
-    private void RevealChangedArea(int row, int column, long now)
+    private void ActivateChangedArea(int row, int column, long now)
     {
-        var padding = _settings.ContentRevealPaddingCells;
-        var revealUntil = now + ToStopwatchTicks(_settings.ContentRevealHoldMilliseconds);
+        var padding = _settings.ContentActivationPaddingCells;
+        var activeUntil = now + ToStopwatchTicks(_settings.StaticDelaySeconds * 1000.0);
 
         for (var y = Math.Max(0, row - padding); y <= Math.Min(_rows - 1, row + padding); y++)
         {
             for (var x = Math.Max(0, column - padding); x <= Math.Min(_columns - 1, column + padding); x++)
             {
                 var cell = _cells[y * _columns + x];
-                cell.StableSinceTicks = now;
-                cell.RevealUntilTicks = Math.Max(cell.RevealUntilTicks, revealUntil);
+                cell.ActiveUntilTicks = Math.Max(cell.ActiveUntilTicks, activeUntil);
                 cell.WeakChangeStreak = 0;
-                cell.TargetAlpha = 0;
-
-                // A changing zone must appear at once, without waiting for the fade.
-                if (cell.Alpha > 0)
-                {
-                    cell.Alpha = 0;
-                    _maskDirty = true;
-                }
             }
         }
     }
@@ -336,28 +333,16 @@ internal sealed class MonitorSession : IDisposable
                 return;
             }
 
-            ApplyMouseReveal(cursor, bounds, now);
+            ApplyMouseActivity(cursor, bounds, now);
+            BuildSpatialTargets(now);
 
             changed = _maskDirty;
             _maskDirty = false;
-            var revealEverything = now < _revealAllUntilTicks;
-            var staticDelayTicks = ToStopwatchTicks(_settings.StaticDelaySeconds * 1000.0);
 
             foreach (var cell in _cells)
             {
-                var revealed = revealEverything || now < cell.RevealUntilTicks;
-                var oldTarget = cell.TargetAlpha;
-
-                cell.TargetAlpha = !revealed && now - cell.StableSinceTicks >= staticDelayTicks
-                    ? 1f
-                    : 0f;
-
-                if (Math.Abs(oldTarget - cell.TargetAlpha) > 0.001f)
-                {
-                    changed = true;
-                }
-
                 var oldAlpha = cell.Alpha;
+
                 if (cell.TargetAlpha < cell.Alpha)
                 {
                     var step = (float)(elapsedMs / Math.Max(1, _settings.RevealFadeMilliseconds));
@@ -369,7 +354,7 @@ internal sealed class MonitorSession : IDisposable
                     cell.Alpha = Math.Min(cell.TargetAlpha, cell.Alpha + step);
                 }
 
-                if (Math.Abs(oldAlpha - cell.Alpha) > 0.002f)
+                if (Math.Abs(oldAlpha - cell.Alpha) > 0.001f)
                 {
                     changed = true;
                 }
@@ -389,20 +374,20 @@ internal sealed class MonitorSession : IDisposable
         }
     }
 
-    private void ApplyMouseReveal(NativeMethods.Point cursor, System.Drawing.Rectangle bounds, long now)
+    private void ApplyMouseActivity(NativeMethods.Point cursor, System.Drawing.Rectangle bounds, long now)
     {
         if (!bounds.Contains(cursor.X, cursor.Y))
         {
             return;
         }
 
-        var revealRadius = _settings.MouseRevealRadiusPixels;
-        var revealRadiusSquared = revealRadius * revealRadius;
+        var radius = _settings.MouseRevealRadiusPixels;
+        var radiusSquared = radius * radius;
         var centerColumn = Math.Clamp((cursor.X - bounds.Left) * _columns / Math.Max(1, bounds.Width), 0, _columns - 1);
         var centerRow = Math.Clamp((cursor.Y - bounds.Top) * _rows / Math.Max(1, bounds.Height), 0, _rows - 1);
-        var radiusColumns = (int)Math.Ceiling(revealRadius * _columns / (double)Math.Max(1, bounds.Width)) + 1;
-        var radiusRows = (int)Math.Ceiling(revealRadius * _rows / (double)Math.Max(1, bounds.Height)) + 1;
-        var revealUntil = now + ToStopwatchTicks(_settings.MouseRevealHoldMilliseconds);
+        var radiusColumns = (int)Math.Ceiling(radius * _columns / (double)Math.Max(1, bounds.Width)) + 1;
+        var radiusRows = (int)Math.Ceiling(radius * _rows / (double)Math.Max(1, bounds.Height)) + 1;
+        var activeUntil = now + ToStopwatchTicks(_settings.MouseRevealHoldMilliseconds);
 
         for (var row = Math.Max(0, centerRow - radiusRows); row <= Math.Min(_rows - 1, centerRow + radiusRows); row++)
         {
@@ -416,13 +401,174 @@ internal sealed class MonitorSession : IDisposable
                 var distanceX = cursor.X < cellLeft ? cellLeft - cursor.X : cursor.X > cellRight ? cursor.X - cellRight : 0;
                 var distanceY = cursor.Y < cellTop ? cellTop - cursor.Y : cursor.Y > cellBottom ? cursor.Y - cellBottom : 0;
 
-                if (distanceX * distanceX + distanceY * distanceY > revealRadiusSquared)
+                if (distanceX * distanceX + distanceY * distanceY > radiusSquared)
                 {
                     continue;
                 }
 
                 var cell = _cells[row * _columns + column];
-                cell.RevealUntilTicks = Math.Max(cell.RevealUntilTicks, revealUntil);
+                cell.ActiveUntilTicks = Math.Max(cell.ActiveUntilTicks, activeUntil);
+            }
+        }
+    }
+
+    private void BuildSpatialTargets(long now)
+    {
+        var revealEverything = now < _revealAllUntilTicks;
+
+        for (var index = 0; index < _cells.Length; index++)
+        {
+            _activeCells[index] = revealEverything || now < _cells[index].ActiveUntilTicks;
+        }
+
+        CloseSmallActivityGaps();
+        BuildDistanceField();
+
+        var core = _settings.ActivityCoreRadiusPixels;
+        var feather = Math.Max(1, _settings.ActivityFeatherRadiusPixels);
+        var cellPixels = Math.Max(1, _settings.CellSizePixels);
+
+        for (var index = 0; index < _cells.Length; index++)
+        {
+            var distancePixels = _distance[index] * cellPixels;
+            float target;
+
+            if (distancePixels <= core)
+            {
+                target = 0f;
+            }
+            else if (distancePixels >= core + feather)
+            {
+                target = 1f;
+            }
+            else
+            {
+                var t = (distancePixels - core) / feather;
+                target = SmoothStep(t);
+            }
+
+            if (Math.Abs(_cells[index].TargetAlpha - target) > 0.001f)
+            {
+                _cells[index].TargetAlpha = target;
+                _maskDirty = true;
+            }
+        }
+    }
+
+    private void CloseSmallActivityGaps()
+    {
+        Array.Copy(_activeCells, _closedActiveCells, _activeCells.Length);
+
+        for (var row = 0; row < _rows; row++)
+        {
+            for (var column = 0; column < _columns; column++)
+            {
+                var index = row * _columns + column;
+                if (_activeCells[index])
+                {
+                    continue;
+                }
+
+                var neighbours = 0;
+                for (var offsetY = -1; offsetY <= 1; offsetY++)
+                {
+                    var y = row + offsetY;
+                    if (y < 0 || y >= _rows)
+                    {
+                        continue;
+                    }
+
+                    for (var offsetX = -1; offsetX <= 1; offsetX++)
+                    {
+                        if (offsetX == 0 && offsetY == 0)
+                        {
+                            continue;
+                        }
+
+                        var x = column + offsetX;
+                        if (x >= 0 && x < _columns && _activeCells[y * _columns + x])
+                        {
+                            neighbours++;
+                        }
+                    }
+                }
+
+                var horizontalBridge = column > 0 && column + 1 < _columns &&
+                    _activeCells[index - 1] && _activeCells[index + 1];
+                var verticalBridge = row > 0 && row + 1 < _rows &&
+                    _activeCells[index - _columns] && _activeCells[index + _columns];
+
+                if (neighbours >= 4 || horizontalBridge || verticalBridge)
+                {
+                    _closedActiveCells[index] = true;
+                }
+            }
+        }
+    }
+
+    private void BuildDistanceField()
+    {
+        const float infinity = 1_000_000f;
+        const float diagonal = 1.41421356f;
+
+        for (var index = 0; index < _distance.Length; index++)
+        {
+            _distance[index] = _closedActiveCells[index] ? 0f : infinity;
+        }
+
+        for (var row = 0; row < _rows; row++)
+        {
+            for (var column = 0; column < _columns; column++)
+            {
+                var index = row * _columns + column;
+                var value = _distance[index];
+
+                if (column > 0)
+                {
+                    value = Math.Min(value, _distance[index - 1] + 1f);
+                }
+                if (row > 0)
+                {
+                    value = Math.Min(value, _distance[index - _columns] + 1f);
+                    if (column > 0)
+                    {
+                        value = Math.Min(value, _distance[index - _columns - 1] + diagonal);
+                    }
+                    if (column + 1 < _columns)
+                    {
+                        value = Math.Min(value, _distance[index - _columns + 1] + diagonal);
+                    }
+                }
+
+                _distance[index] = value;
+            }
+        }
+
+        for (var row = _rows - 1; row >= 0; row--)
+        {
+            for (var column = _columns - 1; column >= 0; column--)
+            {
+                var index = row * _columns + column;
+                var value = _distance[index];
+
+                if (column + 1 < _columns)
+                {
+                    value = Math.Min(value, _distance[index + 1] + 1f);
+                }
+                if (row + 1 < _rows)
+                {
+                    value = Math.Min(value, _distance[index + _columns] + 1f);
+                    if (column > 0)
+                    {
+                        value = Math.Min(value, _distance[index + _columns - 1] + diagonal);
+                    }
+                    if (column + 1 < _columns)
+                    {
+                        value = Math.Min(value, _distance[index + _columns + 1] + diagonal);
+                    }
+                }
+
+                _distance[index] = value;
             }
         }
     }
@@ -433,53 +579,52 @@ internal sealed class MonitorSession : IDisposable
         {
             for (var index = 0; index < _cells.Length; index++)
             {
-                _rawRenderAlpha[index] = _enabled ? _cells[index].Alpha : 0;
+                _cellAlpha[index] = _enabled ? _cells[index].Alpha : 0f;
             }
 
-            // Feather only outward from protected cells. Fully black cells stay
-            // fully black, while borders and tiny isolated gaps become smoother.
-            for (var row = 0; row < _rows; row++)
+            for (var renderRow = 0; renderRow < _renderRows; renderRow++)
             {
-                for (var column = 0; column < _columns; column++)
+                var gridY = (renderRow + 0.5f) * _rows / _renderRows - 0.5f;
+                var y0 = Math.Clamp((int)MathF.Floor(gridY), 0, _rows - 1);
+                var y1 = Math.Min(_rows - 1, y0 + 1);
+                var ty = Math.Clamp(gridY - y0, 0f, 1f);
+
+                for (var renderColumn = 0; renderColumn < _renderColumns; renderColumn++)
                 {
-                    var index = row * _columns + column;
-                    var source = _rawRenderAlpha[index];
-                    float weightedTotal = 0;
-                    float weightTotal = 0;
+                    var gridX = (renderColumn + 0.5f) * _columns / _renderColumns - 0.5f;
+                    var x0 = Math.Clamp((int)MathF.Floor(gridX), 0, _columns - 1);
+                    var x1 = Math.Min(_columns - 1, x0 + 1);
+                    var tx = Math.Clamp(gridX - x0, 0f, 1f);
 
-                    for (var offsetY = -1; offsetY <= 1; offsetY++)
+                    var top = Lerp(_cellAlpha[y0 * _columns + x0], _cellAlpha[y0 * _columns + x1], tx);
+                    var bottom = Lerp(_cellAlpha[y1 * _columns + x0], _cellAlpha[y1 * _columns + x1], tx);
+                    var value = Lerp(top, bottom, ty);
+
+                    if (value <= 0.003f)
                     {
-                        var y = row + offsetY;
-                        if (y < 0 || y >= _rows)
-                        {
-                            continue;
-                        }
-
-                        for (var offsetX = -1; offsetX <= 1; offsetX++)
-                        {
-                            var x = column + offsetX;
-                            if (x < 0 || x >= _columns)
-                            {
-                                continue;
-                            }
-
-                            var weight = offsetX == 0 && offsetY == 0
-                                ? 4f
-                                : offsetX == 0 || offsetY == 0 ? 2f : 1f;
-                            weightedTotal += _rawRenderAlpha[y * _columns + x] * weight;
-                            weightTotal += weight;
-                        }
+                        value = 0f;
+                    }
+                    else if (value >= 0.997f)
+                    {
+                        value = 1f;
                     }
 
-                    var feather = weightTotal > 0 ? weightedTotal / weightTotal : source;
-                    var value = Math.Max(source, feather * 0.72f);
-                    _renderAlpha[index] = value >= 0.995f ? 1f : Math.Clamp(value, 0f, 1f);
+                    _renderAlpha[renderRow * _renderColumns + renderColumn] = value;
                 }
             }
         }
 
-        _overlay.SetMask(_renderAlpha, _columns, _rows);
+        _overlay.SetMask(_renderAlpha, _renderColumns, _renderRows);
     }
+
+    private static float SmoothStep(float value)
+    {
+        var t = Math.Clamp(value, 0f, 1f);
+        return t * t * (3f - 2f * t);
+    }
+
+    private static float Lerp(float start, float end, float amount) =>
+        start + (end - start) * amount;
 
     private static long ToStopwatchTicks(double milliseconds) =>
         (long)(milliseconds * Stopwatch.Frequency / 1000.0);

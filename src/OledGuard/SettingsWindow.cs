@@ -23,7 +23,9 @@ internal sealed class SettingsWindow : Window
 {
     private readonly ComboBox _delay;
     private readonly ComboBox _cellSize;
-    private readonly Slider _radius;
+    private readonly Slider _coreRadius;
+    private readonly Slider _featherRadius;
+    private readonly Slider _mouseRadius;
     private readonly Slider _mouseHold;
     private readonly Slider _darkenFade;
     private readonly Slider _revealFade;
@@ -32,10 +34,10 @@ internal sealed class SettingsWindow : Window
     public SettingsWindow(AppSettings settings)
     {
         Title = "OledGuard — Paramètres";
-        Width = 500;
-        Height = 590;
-        MinWidth = 460;
-        MinHeight = 540;
+        Width = 530;
+        Height = 680;
+        MinWidth = 480;
+        MinHeight = 620;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         ResizeMode = ResizeMode.CanMinimize;
         Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(245, 245, 245));
@@ -47,7 +49,7 @@ internal sealed class SettingsWindow : Window
 
         var heading = new TextBlock
         {
-            Text = "Protection OLED dynamique",
+            Text = "Protection OLED par zones actives",
             FontSize = 22,
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(0, 0, 0, 12)
@@ -59,12 +61,14 @@ internal sealed class SettingsWindow : Window
         Grid.SetRow(form, 1);
         root.Children.Add(form);
 
-        _delay = AddCombo(form, "Délai avant passage au noir", new[] { 5, 15, 30, 60, 120 }, settings.StaticDelaySeconds, "secondes");
-        _cellSize = AddCombo(form, "Finesse du masque", new[] { 16, 20, 24, 32, 48 }, settings.CellSizePixels, "pixels par zone");
-        _radius = AddSlider(form, "Rayon révélé autour de la souris", 80, 360, settings.MouseRevealRadiusPixels, "px");
+        _delay = AddCombo(form, "Durée visible après une activité", new[] { 5, 15, 30, 60, 120 }, settings.StaticDelaySeconds, "secondes");
+        _cellSize = AddCombo(form, "Précision de détection", new[] { 24, 32, 40, 48, 64 }, settings.CellSizePixels, "pixels par cellule");
+        _coreRadius = AddSlider(form, "Marge entièrement visible autour de l’activité", 48, 260, settings.ActivityCoreRadiusPixels, "px");
+        _featherRadius = AddSlider(form, "Largeur du dégradé vers le noir", 64, 420, settings.ActivityFeatherRadiusPixels, "px");
+        _mouseRadius = AddSlider(form, "Zone directement activée par la souris", 48, 260, settings.MouseRevealRadiusPixels, "px");
         _mouseHold = AddSlider(form, "Durée visible après passage de la souris", 5, 60, settings.MouseRevealHoldMilliseconds / 1000.0, "s");
-        _revealFade = AddSlider(form, "Fondu vers visible", 40, 500, settings.RevealFadeMilliseconds, "ms");
-        _darkenFade = AddSlider(form, "Fondu vers le noir", 200, 2500, settings.DarkenFadeMilliseconds, "ms");
+        _revealFade = AddSlider(form, "Réapparition", 40, 500, settings.RevealFadeMilliseconds, "ms");
+        _darkenFade = AddSlider(form, "Retour progressif au noir", 1, 12, settings.DarkenFadeMilliseconds / 1000.0, "s");
 
         _startWithWindows = new CheckBox
         {
@@ -77,7 +81,7 @@ internal sealed class SettingsWindow : Window
 
         var note = new TextBlock
         {
-            Text = "Réglage conseillé : noir après 30 s, finesse 16 px, maintien souris 30 s. Une zone qui bouge redevient visible immédiatement et son délai repart de zéro. Ctrl+Alt+O active/désactive ; Ctrl+Alt+R révèle tout pendant 10 s.",
+            Text = "Réglage conseillé : 30 s, grille 32 px, marge 110 px et dégradé 220 px. L’écran éloigné de toute activité devient noir profond ; les zones utilisées restent nettes avec une transition douce. Ctrl+Alt+O active/désactive et Ctrl+Alt+R révèle tout pendant 10 s.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = System.Windows.Media.Brushes.DimGray,
             Margin = new Thickness(0, 16, 0, 0)
@@ -129,10 +133,12 @@ internal sealed class SettingsWindow : Window
         var updated = original.Clone();
         updated.StaticDelaySeconds = (int)_delay.SelectedItem;
         updated.CellSizePixels = (int)_cellSize.SelectedItem;
-        updated.MouseRevealRadiusPixels = (int)Math.Round(_radius.Value);
+        updated.ActivityCoreRadiusPixels = (int)Math.Round(_coreRadius.Value);
+        updated.ActivityFeatherRadiusPixels = (int)Math.Round(_featherRadius.Value);
+        updated.MouseRevealRadiusPixels = (int)Math.Round(_mouseRadius.Value);
         updated.MouseRevealHoldMilliseconds = (int)Math.Round(_mouseHold.Value * 1000.0);
         updated.RevealFadeMilliseconds = (int)Math.Round(_revealFade.Value);
-        updated.DarkenFadeMilliseconds = (int)Math.Round(_darkenFade.Value);
+        updated.DarkenFadeMilliseconds = (int)Math.Round(_darkenFade.Value * 1000.0);
         updated.StartWithWindows = _startWithWindows.IsChecked == true;
         updated.Normalize();
         return updated;
@@ -144,7 +150,7 @@ internal sealed class SettingsWindow : Window
         {
             Text = label,
             FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 9, 0, 5)
+            Margin = new Thickness(0, 8, 0, 5)
         });
 
         var combo = new ComboBox
@@ -178,13 +184,13 @@ internal sealed class SettingsWindow : Window
         {
             Text = label,
             FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 10, 0, 3)
+            Margin = new Thickness(0, 9, 0, 3)
         });
 
         var panel = new DockPanel();
         var valueText = new TextBlock
         {
-            Width = 76,
+            Width = 78,
             TextAlignment = TextAlignment.Right,
             VerticalAlignment = VerticalAlignment.Center
         };
