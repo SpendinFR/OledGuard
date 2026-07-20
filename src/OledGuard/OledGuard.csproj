@@ -12,7 +12,7 @@
     <RootNamespace>OledGuard</RootNamespace>
     <Version>3.2.0</Version>
     <Product>OledGuard</Product>
-    <Description>Protection OLED par exposition lumineuse cumulative et assombrissement local progressif.</Description>
+    <Description>Assombrissement propre des zones réellement statiques pour écrans OLED.</Description>
     <Authors>OledGuard contributors</Authors>
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>

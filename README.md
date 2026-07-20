@@ -1,41 +1,21 @@
-# OledGuard 3.2 — exposition cumulative
+# OledGuard 3.2
 
-OledGuard assombrit progressivement les zones lumineuses qui restent réellement statiques sur un écran OLED.
+OledGuard assombrit les grandes zones claires qui restent réellement statiques sur un écran OLED.
 
-## Changement principal
+## Correctifs 3.2
 
-La version 3.2 ne considère plus qu'un mouvement remet le risque à zéro.
+- Une zone déjà assombrie reste verrouillée jusqu'à ce qu'un mouvement réel soit confirmé sur plusieurs captures. Les mises à jour des références temporelles ne peuvent donc plus rallumer tout l'écran d'un coup.
+- Les références courte, moyenne et longue sont automatiquement plafonnées par le délai choisi. Un test réglé à 5 secondes commence réellement près de 5 secondes au lieu d'attendre une référence longue de 60 secondes.
+- Le masque est rendu comme une seule petite image alpha mise à l'échelle. Il n'y a plus de rectangles WPF adjacents ni de lignes entre cellules.
+- La souris révèle uniquement sa position actuelle avec un petit dégradé. Aucune ancienne position n'est mémorisée et aucun chemin ne persiste.
+- Le réglage 128 px / 8 sous-zones reste conservé et donne environ 16 px de précision réelle sur un écran 4K.
 
-- chaque sous-zone conserve une dette d'exposition lumineuse ;
-- la dette augmente selon la durée, la stabilité et la luminance ;
-- une interruption courte révèle immédiatement l'image mais ne supprime presque pas la dette ;
-- avec le réglage par défaut, une seconde de mouvement retire seulement 0,2 seconde d'exposition équivalente ;
-- la dette est sauvegardée dans `%LOCALAPPDATA%\OledGuard\exposure` et survit aux redémarrages ;
-- le masque tient compte de la lumière restante après assombrissement afin de ne pas compter la zone comme si elle était encore à pleine luminosité.
+## Commandes
 
-## Valeurs par défaut
+- `Ctrl + Alt + O` : activer ou désactiver.
+- `Ctrl + Alt + R` : révéler temporairement tout l'écran.
+- Clic droit sur l'icône OledGuard : paramètres et fermeture.
 
-- stabilité avant accumulation : 30 secondes ;
-- début de l'assombrissement : 8 minutes équivalentes à blanc maximal ;
-- protection maximale : 25 minutes équivalentes à blanc maximal ;
-- attente après mouvement avant retour du masque : 12 secondes ;
-- assombrissement maximal : 35 % ;
-- fondu vers sombre : 12 secondes ;
-- réapparition : 1,2 seconde ;
-- sauvegarde de la dette : toutes les 5 minutes.
+## Compilation
 
-Les couleurs sombres cumulent très peu de dette. Les blancs et interfaces claires cumulent nettement plus vite grâce à une pondération non linéaire de la luminance.
-
-## Détection
-
-- références courte, moyenne et longue ;
-- âge indépendant pour chaque sous-zone ;
-- nettoyage bidirectionnel des petits îlots et trous ;
-- opacité uniforme dans chaque région connectée pour éviter les bandes internes ;
-- aucune capture vidéo 4K conservée.
-
-## Commandes existantes
-
-- `Ctrl + Alt + O` : activer ou désactiver ;
-- `Ctrl + Alt + R` : révéler tout pendant 10 secondes ;
-- clic droit sur l'icône : paramètres et fermeture.
+Chaque push sur `main` lance le workflow GitHub Actions **Build Windows executable**. Télécharger ensuite l'artifact `OledGuard-win-x64`.

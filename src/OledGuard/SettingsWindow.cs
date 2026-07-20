@@ -24,13 +24,7 @@ namespace OledGuard;
 
 internal sealed class SettingsWindow : Window
 {
-    private readonly Slider _staticEligibility;
-    private readonly Slider _reapplyDelay;
-    private readonly Slider _exposureStart;
-    private readonly Slider _exposureFull;
-    private readonly Slider _movementDecay;
-    private readonly Slider _uncertainDecay;
-    private readonly Slider _exposureSave;
+    private readonly ComboBox _staticDelay;
     private readonly ComboBox _cellSize;
     private readonly ComboBox _samplesPerCell;
     private readonly Slider _maximumOpacity;
@@ -41,6 +35,7 @@ internal sealed class SettingsWindow : Window
     private readonly Slider _mediumReference;
     private readonly Slider _longReference;
     private readonly Slider _stableConfirmations;
+    private readonly Slider _motionConfirmations;
     private readonly Slider _differenceThreshold;
     private readonly Slider _changedFraction;
     private readonly Slider _majorityPasses;
@@ -49,14 +44,17 @@ internal sealed class SettingsWindow : Window
     private readonly Slider _maximumBrightHole;
     private readonly Slider _visibleSampling;
     private readonly Slider _maskedSampling;
+    private readonly CheckBox _mouseRevealEnabled;
+    private readonly Slider _mouseRadius;
+    private readonly Slider _mouseFeather;
     private readonly CheckBox _startWithWindows;
 
     public SettingsWindow(AppSettings settings)
     {
-        Title = "OledGuard — Exposition cumulative";
+        Title = "OledGuard — Stabilité 3.2";
         Width = 640;
-        Height = 880;
-        MinWidth = 540;
+        Height = 850;
+        MinWidth = 530;
         MinHeight = 640;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         ResizeMode = ResizeMode.CanResize;
@@ -69,7 +67,7 @@ internal sealed class SettingsWindow : Window
 
         var heading = new TextBlock
         {
-            Text = "Protection cumulative OLED",
+            Text = "Zones statiques stables",
             FontSize = 22,
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(0, 0, 0, 5)
@@ -79,7 +77,7 @@ internal sealed class SettingsWindow : Window
 
         var subtitle = new TextBlock
         {
-            Text = "Une interruption courte révèle l'image, mais n'efface plus l'exposition accumulée. Les zones lumineuses fixes sont traitées avant les zones sombres.",
+            Text = "Les zones déjà assombries restent verrouillées jusqu'à un mouvement confirmé. Le rendu utilise une surface unique sans lignes entre cellules.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = System.Windows.Media.Brushes.DimGray,
             Margin = new Thickness(0, 30, 0, 10)
@@ -97,26 +95,24 @@ internal sealed class SettingsWindow : Window
         Grid.SetRow(scroll, 1);
         root.Children.Add(scroll);
 
-        AddSection(form, "Exposition cumulée");
-        _exposureStart = AddSlider(form, "Commencer à assombrir après", 1, 120, settings.ExposureStartMinutes, "min équiv. blanc", 1);
-        _exposureFull = AddSlider(form, "Atteindre la protection maximale après", 2, 360, settings.ExposureFullMinutes, "min équiv. blanc", 1);
-        _staticEligibility = AddSlider(form, "Stabilité avant de cumuler l'exposition", 5, 600, settings.StaticEligibilitySeconds, "s");
-        _reapplyDelay = AddSlider(form, "Attente avant de réappliquer après mouvement", 1, 120, settings.ReapplyDelaySeconds, "s");
-        _movementDecay = AddSlider(form, "Dette effacée pendant un vrai mouvement", 0, 200, settings.MovementExposureDecayRate * 100.0, "% du temps");
-        _uncertainDecay = AddSlider(form, "Dette effacée pendant une zone incertaine", 0, 100, settings.UncertainExposureDecayRate * 100.0, "% du temps");
-        _exposureSave = AddSlider(form, "Sauvegarder la dette toutes les", 1, 60, settings.ExposureSaveMinutes, "min");
-
         AddSection(form, "Résultat visuel");
-        _maximumOpacity = AddSlider(form, "Assombrissement maximum", 10, 90, settings.MaximumMaskOpacity * 100.0, "%");
-        _minimumLuminance = AddSlider(form, "Ignorer une région plus sombre que", 0, 120, settings.MinimumLuminanceToDim, "luminance");
+        _staticDelay = AddCombo(
+            form,
+            "Temps sans mouvement avant assombrissement",
+            new[] { 5, 15, 30, 60, 120, 180, 300, 600, 900 },
+            settings.StaticDelaySeconds,
+            "secondes");
+        _maximumOpacity = AddSlider(form, "Assombrissement maximum", 25, 98, settings.MaximumMaskOpacity * 100.0, "%");
+        _minimumLuminance = AddSlider(form, "Ne pas traiter une zone plus sombre que", 0, 100, settings.MinimumLuminanceToDim, "luminance");
         _darkenFade = AddSlider(form, "Durée du fondu vers sombre", 1, 120, settings.DarkenFadeMilliseconds / 1000.0, "s");
-        _revealFade = AddSlider(form, "Réapparition après mouvement", 100, 5000, settings.RevealFadeMilliseconds, "ms");
+        _revealFade = AddSlider(form, "Réapparition après mouvement", 40, 2000, settings.RevealFadeMilliseconds, "ms");
 
         AddSection(form, "Comparaisons temporelles");
-        _shortReference = AddSlider(form, "Référence courte", 1, 15, settings.ShortReferenceSeconds, "s");
-        _mediumReference = AddSlider(form, "Référence moyenne", 3, 120, settings.MediumReferenceSeconds, "s");
-        _longReference = AddSlider(form, "Référence longue", 10, 600, settings.LongReferenceSeconds, "s");
+        _shortReference = AddSlider(form, "Référence courte maximale", 1, 15, settings.ShortReferenceSeconds, "s");
+        _mediumReference = AddSlider(form, "Référence moyenne maximale", 3, 120, settings.MediumReferenceSeconds, "s");
+        _longReference = AddSlider(form, "Référence longue maximale", 10, 600, settings.LongReferenceSeconds, "s");
         _stableConfirmations = AddSlider(form, "Captures stables nécessaires", 1, 12, settings.StableConfirmationSamples, "captures");
+        _motionConfirmations = AddSlider(form, "Captures de mouvement pour rééclairer", 1, 6, settings.MotionConfirmationSamples, "captures");
 
         AddSection(form, "Taille et sensibilité");
         _cellSize = AddCombo(
@@ -140,6 +136,17 @@ internal sealed class SettingsWindow : Window
         _minimumDimRegion = AddSlider(form, "Taille minimale d'une zone à assombrir", 1, 100, settings.MinimumDimRegionCells, "cellules");
         _maximumBrightHole = AddSlider(form, "Taille maximale d'un trou clair à combler", 0, 100, settings.MaximumBrightHoleCells, "cellules");
 
+        AddSection(form, "Souris sans traînée");
+        _mouseRevealEnabled = new CheckBox
+        {
+            Content = "Éclairer uniquement la position actuelle de la souris",
+            IsChecked = settings.MouseRevealEnabled,
+            Margin = new Thickness(0, 7, 0, 5)
+        };
+        form.Children.Add(_mouseRevealEnabled);
+        _mouseRadius = AddSlider(form, "Rayon totalement éclairé", 0, 120, settings.MouseRevealRadiusPixels, "px");
+        _mouseFeather = AddSlider(form, "Dégradé autour du curseur", 0, 160, settings.MouseRevealFeatherPixels, "px");
+
         AddSection(form, "Performance");
         _visibleSampling = AddSlider(form, "Intervalle d'analyse normal", 250, 5000, settings.VisibleSamplingMilliseconds, "ms");
         _maskedSampling = AddSlider(form, "Intervalle quand une zone est sombre", 100, 3000, settings.MaskedSamplingMilliseconds, "ms");
@@ -153,7 +160,7 @@ internal sealed class SettingsWindow : Window
 
         form.Children.Add(new TextBlock
         {
-            Text = "Avec le réglage par défaut, une seconde de mouvement ne retire que 0,2 seconde de dette. Le masque disparaît pour ne pas gêner, puis revient après 12 secondes si la zone redevient fixe. La dette est conservée dans %LOCALAPPDATA%\\OledGuard\\exposure.",
+            Text = "Le réglage 128 px / 8 conserve environ 16 px de précision. Avec un délai de 5 s, les références sont automatiquement raccourcies afin que l'assombrissement commence réellement près de 5 s. La souris ne mémorise aucune ancienne position.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = System.Windows.Media.Brushes.DimGray,
             Margin = new Thickness(0, 12, 0, 12)
@@ -201,13 +208,7 @@ internal sealed class SettingsWindow : Window
     public AppSettings BuildSettings(AppSettings original)
     {
         var updated = original.Clone();
-        updated.StaticEligibilitySeconds = (int)Math.Round(_staticEligibility.Value);
-        updated.ReapplyDelaySeconds = (int)Math.Round(_reapplyDelay.Value);
-        updated.ExposureStartMinutes = _exposureStart.Value;
-        updated.ExposureFullMinutes = Math.Max(_exposureFull.Value, updated.ExposureStartMinutes + 1.0);
-        updated.MovementExposureDecayRate = _movementDecay.Value / 100.0;
-        updated.UncertainExposureDecayRate = _uncertainDecay.Value / 100.0;
-        updated.ExposureSaveMinutes = (int)Math.Round(_exposureSave.Value);
+        updated.StaticDelaySeconds = (int)_staticDelay.SelectedItem;
         updated.DetectionCellSizePixels = (int)_cellSize.SelectedItem;
         updated.SamplesPerCell = (int)_samplesPerCell.SelectedItem;
         updated.MaximumMaskOpacity = _maximumOpacity.Value / 100.0;
@@ -218,12 +219,16 @@ internal sealed class SettingsWindow : Window
         updated.MediumReferenceSeconds = (int)Math.Round(_mediumReference.Value);
         updated.LongReferenceSeconds = (int)Math.Round(_longReference.Value);
         updated.StableConfirmationSamples = (int)Math.Round(_stableConfirmations.Value);
+        updated.MotionConfirmationSamples = (int)Math.Round(_motionConfirmations.Value);
         updated.DifferenceThreshold = _differenceThreshold.Value;
         updated.ChangedSampleFraction = _changedFraction.Value / 100.0;
         updated.MajorityFilterPasses = (int)Math.Round(_majorityPasses.Value);
         updated.MajorityDimThreshold = (int)Math.Round(_majorityThreshold.Value);
         updated.MinimumDimRegionCells = (int)Math.Round(_minimumDimRegion.Value);
         updated.MaximumBrightHoleCells = (int)Math.Round(_maximumBrightHole.Value);
+        updated.MouseRevealEnabled = _mouseRevealEnabled.IsChecked == true;
+        updated.MouseRevealRadiusPixels = (int)Math.Round(_mouseRadius.Value);
+        updated.MouseRevealFeatherPixels = (int)Math.Round(_mouseFeather.Value);
         updated.VisibleSamplingMilliseconds = (int)Math.Round(_visibleSampling.Value);
         updated.MaskedSamplingMilliseconds = (int)Math.Round(_maskedSampling.Value);
         updated.StartWithWindows = _startWithWindows.IsChecked == true;
@@ -299,7 +304,7 @@ internal sealed class SettingsWindow : Window
         var panel = new DockPanel();
         var valueText = new TextBlock
         {
-            Width = 135,
+            Width = 110,
             TextAlignment = TextAlignment.Right,
             VerticalAlignment = VerticalAlignment.Center
         };

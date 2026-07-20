@@ -1,35 +1,11 @@
-# Conception du moteur cumulatif 3.2
+# OledGuard 3.2 — moteur de stabilité
 
-## Dette d'exposition
+Chaque sous-zone possède son propre âge de stabilité. Les comparaisons immédiate, courte, moyenne et longue servent uniquement à autoriser l'entrée dans l'état assombri.
 
-Chaque cellule conserve une valeur en secondes équivalentes à pleine luminance. Pour une capture stable :
+Une fois assombrie, la sous-zone est verrouillée. Elle ne redevient visible qu'après plusieurs captures consécutives montrant un mouvement local suffisamment soutenu. Une rotation de référence ou une analyse momentanément incohérente ne peut donc plus supprimer tout le masque.
 
-`gain = durée × poids_luminance × lumière_restante`
+Le nettoyage spatial est symétrique : les petits îlots sombres sont retirés et les petits trous clairs entièrement entourés sont comblés. Les composantes connexes partagent une opacité commune et conservent l'opacité maximale de leurs anciennes composantes lors d'une fusion ou d'une séparation.
 
-Le poids de luminance est nul sous le seuil configuré, puis augmente avec une courbe de puissance 1,6. Le blanc fixe cumule donc beaucoup plus vite qu'un gris sombre.
+Le rendu utilise un unique `WriteableBitmap` basse résolution avec interpolation linéaire. Les anciennes lignes provenaient du dessin de milliers de rectangles adjacents.
 
-La lumière restante vaut approximativement `1 - opacité`. Une cellule déjà assombrie continue d'accumuler, mais moins vite puisqu'elle émet réellement moins de lumière.
-
-## Mouvement et interruption courte
-
-Un changement soutenu révèle la zone, mais ne remet pas la dette à zéro :
-
-`perte = durée × taux_de_décroissance`
-
-Le taux par défaut est 0,20 pendant un vrai mouvement. Une interruption d'une seconde ne retire donc que 0,2 seconde de dette. Une zone incertaine décroît encore plus lentement, à 0,03 par défaut.
-
-## Transformation de la dette en opacité
-
-- avant `ExposureStartMinutes`, la cible est nulle ;
-- entre le seuil de début et le seuil maximal, une interpolation smoothstep évite une apparition brutale ;
-- après `ExposureFullMinutes`, la cible atteint `MaximumMaskOpacity`.
-
-Le mouvement supprime temporairement la région du masque. Après `ReapplyDelaySeconds`, la cible calculée depuis la dette redevient active sans recommencer tout le compteur.
-
-## Persistance
-
-Chaque écran et chaque géométrie de grille possèdent un fichier binaire séparé dans `%LOCALAPPDATA%\OledGuard\exposure`. L'identité est hachée en SHA-256. Les écritures utilisent un fichier temporaire puis un remplacement atomique.
-
-## Limites assumées
-
-Le moteur mesure l'image finale capturée par Windows. Il ne connaît pas directement les sous-pixels physiques, les algorithmes internes du téléviseur ou la luminance HDR absolue. Il vise une réduction pratique de l'exposition différentielle, pas une mesure de vieillissement certifiée par le fabricant.
+La souris n'altère aucun compteur. Elle applique uniquement une réduction temporaire de l'alpha autour de sa position actuelle au moment du rendu. Dès qu'elle se déplace, l'ancienne position retrouve immédiatement l'alpha réel de la zone.
