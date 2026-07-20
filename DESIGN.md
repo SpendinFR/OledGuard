@@ -21,3 +21,8 @@ Une région statique nettoyée reçoit une seule opacité cible. Tous ses blocs 
 ## Empreinte
 
 La résolution de travail dépend du nombre de cellules, pas de la résolution native. À 4K et 64 px par cellule, la grille contient environ 2 040 cellules et chaque référence d'analyse environ 128 Kio.
+
+
+## Persistance spatiale 3.1
+
+La taille de bloc et le nombre de sous-zones sont découplés. Chaque sous-zone garde son propre compteur temporel. Le masque nettoyé est ensuite regroupé en composantes connexes dont l’opacité est unique et persistante par recouvrement spatial entre deux analyses.

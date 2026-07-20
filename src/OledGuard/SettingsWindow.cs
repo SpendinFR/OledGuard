@@ -73,7 +73,7 @@ internal sealed class SettingsWindow : Window
 
         var subtitle = new TextBlock
         {
-            Text = "Comparaison courte, moyenne et longue ; nettoyage des petits îlots dans les deux sens.",
+            Text = "Chaque sous-zone garde son propre âge ; les régions connectées partagent ensuite une opacité uniforme.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = System.Windows.Media.Brushes.DimGray,
             Margin = new Thickness(0, 30, 0, 10)
@@ -112,18 +112,18 @@ internal sealed class SettingsWindow : Window
         AddSection(form, "Taille et sensibilité");
         _cellSize = AddCombo(
             form,
-            "Taille des zones d'analyse",
+            "Taille d'un bloc de capture",
             new[] { 32, 40, 48, 64, 80, 96, 128, 160 },
             settings.DetectionCellSizePixels,
             "px");
         _samplesPerCell = AddCombo(
             form,
-            "Échantillons par zone",
+            "Sous-zones indépendantes par bloc",
             new[] { 2, 3, 4, 5, 6, 8 },
             settings.SamplesPerCell,
             "par côté");
         _differenceThreshold = AddSlider(form, "Différence moyenne minimale", 0.5, 30, settings.DifferenceThreshold, "", 1);
-        _changedFraction = AddSlider(form, "Part d'échantillons modifiés", 1, 100, settings.ChangedSampleFraction * 100.0, "%");
+        _changedFraction = AddSlider(form, "Support local minimal d'un mouvement", 1, 100, settings.ChangedSampleFraction * 100.0, "%");
 
         AddSection(form, "Nettoyage bidirectionnel");
         _majorityPasses = AddSlider(form, "Passages du filtre de majorité", 0, 5, settings.MajorityFilterPasses, "passes");
@@ -144,7 +144,7 @@ internal sealed class SettingsWindow : Window
 
         form.Children.Add(new TextBlock
         {
-            Text = "Point de départ conseillé : 64 px, 2 / 15 / 60 s, délai 120 s, fondu 20 s, opacité 85 %, majorité 6/9 sur 2 passes. Une petite tache sombre est supprimée ; un petit trou clair entouré de sombre est comblé.",
+            Text = "Ton réglage 128 px / 8 donne environ 16 px de précision réelle : les bords inchangés gardent leur ancienneté même si la fenêtre centrale change. Les régions statiques connectées utilisent exactement la même opacité, sans bandes internes.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = System.Windows.Media.Brushes.DimGray,
             Margin = new Thickness(0, 12, 0, 12)

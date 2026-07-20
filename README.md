@@ -33,3 +33,10 @@ OledGuard assombrit les grandes zones lumineuses qui restent réellement statiqu
 ## Mémoire
 
 Pour un écran 4K avec des cellules de 64 px et quatre échantillons par côté, la capture d'analyse mesure environ 240 × 136 pixels. Le moteur conserve quatre petits tampons réutilisés, sans historique vidéo 4K. L'overlay Windows reste la principale allocation graphique.
+
+
+## Correction 3.1
+
+- Chaque sous-échantillon conserve son propre âge de stabilité. Un changement au centre d’une fenêtre ne remet donc plus à zéro les bandes identiques autour.
+- Une région statique connectée partage une seule opacité pendant le fondu, ce qui supprime les bandes internes.
+- Le réglage 128 px avec 8 sous-zones donne environ 16 px de précision réelle sans capture 4K.

@@ -5,12 +5,13 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 30;
+    public const int CurrentSchemaVersion = 31;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
 
-    // Analysis grid. A 64 px grid is about 60 x 34 cells on a 4K display.
+    // Capture blocks and independent sub-zones. Each sample now owns its own
+    // stability timer. Example: 128 px / 8 samples = about 16 px precision.
     public int DetectionCellSizePixels { get; set; } = 64;
     public int SamplesPerCell { get; set; } = 4;
     public int VisibleSamplingMilliseconds { get; set; } = 1000;
@@ -35,8 +36,8 @@ public sealed class AppSettings
     // the average luminance of an entire cleaned region, not cell by cell.
     public byte MinimumLuminanceToDim { get; set; } = 12;
 
-    // Bidirectional cleanup: majority passes remove isolated dim islands and
-    // isolated bright holes. Component limits finish the cleanup.
+    // Bidirectional cleanup removes isolated dim islands and isolated bright holes.
+    // Connected regions then share one opacity, so no internal bands remain.
     public int MajorityFilterPasses { get; set; } = 2;
     public int MajorityDimThreshold { get; set; } = 6;
     public int MinimumDimRegionCells { get; set; } = 4;
@@ -53,25 +54,31 @@ public sealed class AppSettings
             return;
         }
 
-        DetectionCellSizePixels = 64;
-        SamplesPerCell = 4;
-        VisibleSamplingMilliseconds = 1000;
-        MaskedSamplingMilliseconds = 500;
-        ShortReferenceSeconds = 2;
-        MediumReferenceSeconds = 15;
-        LongReferenceSeconds = 60;
-        StableConfirmationSamples = 3;
-        DifferenceThreshold = 4.0;
-        ChangedSampleFraction = 0.08;
-        StaticDelaySeconds = 120;
-        DarkenFadeMilliseconds = 20_000;
-        RevealFadeMilliseconds = 150;
-        MaximumMaskOpacity = 0.85;
-        MinimumLuminanceToDim = 12;
-        MajorityFilterPasses = 2;
-        MajorityDimThreshold = 6;
-        MinimumDimRegionCells = 4;
-        MaximumBrightHoleCells = 3;
+        // Preserve every v30 user adjustment, especially 128 px / 8 samples.
+        // Older experimental schemas still receive the stable-engine defaults.
+        if (SchemaVersion < 30)
+        {
+            DetectionCellSizePixels = 64;
+            SamplesPerCell = 4;
+            VisibleSamplingMilliseconds = 1000;
+            MaskedSamplingMilliseconds = 500;
+            ShortReferenceSeconds = 2;
+            MediumReferenceSeconds = 15;
+            LongReferenceSeconds = 60;
+            StableConfirmationSamples = 3;
+            DifferenceThreshold = 4.0;
+            ChangedSampleFraction = 0.08;
+            StaticDelaySeconds = 120;
+            DarkenFadeMilliseconds = 20_000;
+            RevealFadeMilliseconds = 150;
+            MaximumMaskOpacity = 0.85;
+            MinimumLuminanceToDim = 12;
+            MajorityFilterPasses = 2;
+            MajorityDimThreshold = 6;
+            MinimumDimRegionCells = 4;
+            MaximumBrightHoleCells = 3;
+        }
+
         SchemaVersion = CurrentSchemaVersion;
     }
 

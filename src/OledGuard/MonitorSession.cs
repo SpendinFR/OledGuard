@@ -12,7 +12,11 @@ internal sealed class MonitorSession : IDisposable
         public int StableEvidence;
         public byte Luminance;
         public float Alpha;
-        public float TargetAlpha;
+    }
+
+    private sealed class RegionState
+    {
+        public float Alpha;
     }
 
     private readonly FormsScreen _screen;
@@ -22,7 +26,6 @@ internal sealed class MonitorSession : IDisposable
     private readonly Cell[] _cells;
     private readonly int _columns;
     private readonly int _rows;
-    private readonly int _samplesPerCell;
     private readonly int _sampleWidth;
     private readonly int _sampleHeight;
     private readonly int _sampleStride;
@@ -30,13 +33,21 @@ internal sealed class MonitorSession : IDisposable
     private readonly byte[] _shortReference;
     private readonly byte[] _mediumReference;
     private readonly byte[] _longReference;
+    private readonly bool[] _immediateChanges;
+    private readonly bool[] _shortChanges;
+    private readonly bool[] _mediumChanges;
+    private readonly bool[] _longChanges;
     private readonly bool[] _rawStatic;
     private readonly bool[] _maskA;
     private readonly bool[] _maskB;
+    private readonly bool[] _cleanStableMask;
     private readonly bool[] _finalDimMask;
     private readonly bool[] _visited;
     private readonly int[] _queue;
     private readonly float[] _renderAlpha;
+    private int[] _regionMap;
+    private int[] _nextRegionMap;
+    private List<RegionState> _regions = new();
     private readonly object _sync = new();
     private readonly DispatcherTimer _animationTimer;
     private readonly CancellationTokenSource _cancellation = new();
@@ -58,11 +69,15 @@ internal sealed class MonitorSession : IDisposable
         _settings = settings;
 
         var bounds = screen.Bounds;
-        _columns = Math.Max(1, (int)Math.Ceiling(bounds.Width / (double)settings.DetectionCellSizePixels));
-        _rows = Math.Max(1, (int)Math.Ceiling(bounds.Height / (double)settings.DetectionCellSizePixels));
-        _samplesPerCell = settings.SamplesPerCell;
-        _sampleWidth = _columns * _samplesPerCell;
-        _sampleHeight = _rows * _samplesPerCell;
+        var coarseColumns = Math.Max(1, (int)Math.Ceiling(bounds.Width / (double)settings.DetectionCellSizePixels));
+        var coarseRows = Math.Max(1, (int)Math.Ceiling(bounds.Height / (double)settings.DetectionCellSizePixels));
+
+        // Every sample now owns its own stability timer. With 128 px and 8 samples,
+        // the effective precision is about 16 px, while the capture remains tiny.
+        _columns = checked(coarseColumns * settings.SamplesPerCell);
+        _rows = checked(coarseRows * settings.SamplesPerCell);
+        _sampleWidth = _columns;
+        _sampleHeight = _rows;
         _sampleStride = checked(_sampleWidth * 4);
 
         var cellCount = checked(_columns * _rows);
@@ -72,13 +87,22 @@ internal sealed class MonitorSession : IDisposable
         _shortReference = new byte[sampleBytes];
         _mediumReference = new byte[sampleBytes];
         _longReference = new byte[sampleBytes];
+        _immediateChanges = new bool[cellCount];
+        _shortChanges = new bool[cellCount];
+        _mediumChanges = new bool[cellCount];
+        _longChanges = new bool[cellCount];
         _rawStatic = new bool[cellCount];
         _maskA = new bool[cellCount];
         _maskB = new bool[cellCount];
+        _cleanStableMask = new bool[cellCount];
         _finalDimMask = new bool[cellCount];
         _visited = new bool[cellCount];
         _queue = new int[cellCount];
         _renderAlpha = new float[cellCount];
+        _regionMap = new int[cellCount];
+        _nextRegionMap = new int[cellCount];
+        Array.Fill(_regionMap, -1);
+        Array.Fill(_nextRegionMap, -1);
 
         _overlay = new OverlayWindow(screen);
         _sampler = new ScreenSampler(bounds, _sampleWidth, _sampleHeight);
@@ -113,17 +137,24 @@ internal sealed class MonitorSession : IDisposable
             _mediumReferenceTicks = 0;
             _longReferenceTicks = 0;
 
+            Array.Clear(_immediateChanges, 0, _immediateChanges.Length);
+            Array.Clear(_shortChanges, 0, _shortChanges.Length);
+            Array.Clear(_mediumChanges, 0, _mediumChanges.Length);
+            Array.Clear(_longChanges, 0, _longChanges.Length);
             Array.Clear(_rawStatic, 0, _rawStatic.Length);
             Array.Clear(_maskA, 0, _maskA.Length);
             Array.Clear(_maskB, 0, _maskB.Length);
+            Array.Clear(_cleanStableMask, 0, _cleanStableMask.Length);
             Array.Clear(_finalDimMask, 0, _finalDimMask.Length);
+            Array.Fill(_regionMap, -1);
+            Array.Fill(_nextRegionMap, -1);
+            _regions.Clear();
 
             foreach (var cell in _cells)
             {
                 cell.LastMotionTicks = now;
                 cell.StableEvidence = 0;
                 cell.Luminance = 0;
-                cell.TargetAlpha = 0f;
                 cell.Alpha = 0f;
             }
 
@@ -154,7 +185,7 @@ internal sealed class MonitorSession : IDisposable
                 lock (_sync)
                 {
                     shouldCapture = _enabled;
-                    if (_cells.Any(static cell => cell.Alpha > 0.02f || cell.TargetAlpha > 0.02f))
+                    if (_cells.Any(static cell => cell.Alpha > 0.02f))
                     {
                         delay = _settings.MaskedSamplingMilliseconds;
                     }
@@ -207,7 +238,18 @@ internal sealed class MonitorSession : IDisposable
                 return;
             }
 
-            var staticDelayTicks = ToStopwatchTicks(_settings.StaticDelaySeconds * 1000.0);
+            for (var index = 0; index < _cells.Length; index++)
+            {
+                var offset = index * 4;
+                var blue = current[offset];
+                var green = current[offset + 1];
+                var red = current[offset + 2];
+                _cells[index].Luminance = (byte)((red * 54L + green * 183L + blue * 19L) >> 8);
+                _immediateChanges[index] = PixelChanged(current, _previous, offset);
+                _shortChanges[index] = PixelChanged(current, _shortReference, offset);
+                _mediumChanges[index] = PixelChanged(current, _mediumReference, offset);
+                _longChanges[index] = PixelChanged(current, _longReference, offset);
+            }
 
             for (var row = 0; row < _rows; row++)
             {
@@ -215,11 +257,10 @@ internal sealed class MonitorSession : IDisposable
                 {
                     var index = row * _columns + column;
                     var cell = _cells[index];
-                    var immediateChanged = CompareCell(current, _previous, row, column, out var luminance);
-                    var shortChanged = CompareCell(current, _shortReference, row, column, out _);
-                    var mediumChanged = CompareCell(current, _mediumReference, row, column, out _);
-                    var longChanged = CompareCell(current, _longReference, row, column, out _);
-                    cell.Luminance = luminance;
+                    var immediateChanged = HasSupportedChange(_immediateChanges, row, column);
+                    var shortChanged = HasSupportedChange(_shortChanges, row, column);
+                    var mediumChanged = HasSupportedChange(_mediumChanges, row, column);
+                    var longChanged = HasSupportedChange(_longChanges, row, column);
 
                     if (immediateChanged || shortChanged)
                     {
@@ -238,13 +279,11 @@ internal sealed class MonitorSession : IDisposable
                         cell.StableEvidence = 0;
                     }
 
-                    _rawStatic[index] =
-                        cell.StableEvidence >= _settings.StableConfirmationSamples &&
-                        now - cell.LastMotionTicks >= staticDelayTicks;
+                    _rawStatic[index] = cell.StableEvidence >= _settings.StableConfirmationSamples;
                 }
             }
 
-            BuildCleanDimMask();
+            BuildCleanDimMask(now);
             Buffer.BlockCopy(current, 0, _previous, 0, current.Length);
 
             if (now - _shortReferenceTicks >= ToStopwatchTicks(_settings.ShortReferenceSeconds * 1000.0))
@@ -269,47 +308,54 @@ internal sealed class MonitorSession : IDisposable
         }
     }
 
-    private bool CompareCell(byte[] current, byte[] reference, int cellRow, int cellColumn, out byte luminance)
+    private bool PixelChanged(byte[] current, byte[] reference, int offset)
     {
-        var startX = cellColumn * _samplesPerCell;
-        var startY = cellRow * _samplesPerCell;
-        var changedSamples = 0;
-        var sampleCount = _samplesPerCell * _samplesPerCell;
-        double differenceTotal = 0;
-        long luminanceTotal = 0;
+        var difference = (
+            Math.Abs(current[offset] - reference[offset]) +
+            Math.Abs(current[offset + 1] - reference[offset + 1]) +
+            Math.Abs(current[offset + 2] - reference[offset + 2])) / 3.0;
+        return difference >= _settings.DifferenceThreshold;
+    }
 
-        for (var y = 0; y < _samplesPerCell; y++)
+    private bool HasSupportedChange(bool[] changes, int row, int column)
+    {
+        var index = row * _columns + column;
+        if (!changes[index])
         {
-            var rowOffset = (startY + y) * _sampleStride;
-            for (var x = 0; x < _samplesPerCell; x++)
-            {
-                var offset = rowOffset + (startX + x) * 4;
-                var blue = current[offset];
-                var green = current[offset + 1];
-                var red = current[offset + 2];
-                var difference = (
-                    Math.Abs(blue - reference[offset]) +
-                    Math.Abs(green - reference[offset + 1]) +
-                    Math.Abs(red - reference[offset + 2])) / 3.0;
+            return false;
+        }
 
-                differenceTotal += difference;
-                if (difference >= _settings.DifferenceThreshold)
+        var changedCount = 0;
+        var sampleCount = 0;
+        for (var offsetY = -1; offsetY <= 1; offsetY++)
+        {
+            var neighbourRow = row + offsetY;
+            if (neighbourRow < 0 || neighbourRow >= _rows)
+            {
+                continue;
+            }
+
+            for (var offsetX = -1; offsetX <= 1; offsetX++)
+            {
+                var neighbourColumn = column + offsetX;
+                if (neighbourColumn < 0 || neighbourColumn >= _columns)
                 {
-                    changedSamples++;
+                    continue;
                 }
 
-                luminanceTotal += (red * 54L + green * 183L + blue * 19L) >> 8;
+                sampleCount++;
+                if (changes[neighbourRow * _columns + neighbourColumn])
+                {
+                    changedCount++;
+                }
             }
         }
 
-        luminance = (byte)Math.Clamp(luminanceTotal / sampleCount, 0, 255);
-        var meanDifference = differenceTotal / sampleCount;
-        var changedFraction = changedSamples / (double)sampleCount;
-        return meanDifference >= _settings.DifferenceThreshold ||
-               changedFraction >= _settings.ChangedSampleFraction;
+        var required = Math.Max(1, (int)Math.Ceiling(sampleCount * _settings.ChangedSampleFraction));
+        return changedCount >= required;
     }
 
-    private void BuildCleanDimMask()
+    private void BuildCleanDimMask(long now)
     {
         Array.Copy(_rawStatic, _maskA, _rawStatic.Length);
         var source = _maskA;
@@ -321,10 +367,11 @@ internal sealed class MonitorSession : IDisposable
             (source, destination) = (destination, source);
         }
 
-        Array.Copy(source, _finalDimMask, source.Length);
-        RemoveSmallDimIslands(_finalDimMask);
-        FillSmallBrightHoles(_finalDimMask);
-        SuppressDarkRegions(_finalDimMask);
+        Array.Copy(source, _cleanStableMask, source.Length);
+        RemoveSmallStaticIslands(_cleanStableMask);
+        FillSmallActiveHoles(_cleanStableMask);
+        BuildTimedDimMask(now);
+        RebuildUniformRegions();
     }
 
     private void ApplyBidirectionalMajority(bool[] source, bool[] destination)
@@ -383,7 +430,7 @@ internal sealed class MonitorSession : IDisposable
         }
     }
 
-    private void RemoveSmallDimIslands(bool[] mask)
+    private void RemoveSmallStaticIslands(bool[] mask)
     {
         if (_settings.MinimumDimRegionCells <= 1)
         {
@@ -409,7 +456,7 @@ internal sealed class MonitorSession : IDisposable
         }
     }
 
-    private void FillSmallBrightHoles(bool[] mask)
+    private void FillSmallActiveHoles(bool[] mask)
     {
         if (_settings.MaximumBrightHoleCells <= 0)
         {
@@ -433,6 +480,33 @@ internal sealed class MonitorSession : IDisposable
                 }
             }
         }
+    }
+
+    private void BuildTimedDimMask(long now)
+    {
+        var staticDelayTicks = ToStopwatchTicks(_settings.StaticDelaySeconds * 1000.0);
+        for (var index = 0; index < _cleanStableMask.Length; index++)
+        {
+            _maskA[index] = _cleanStableMask[index] &&
+                _rawStatic[index] &&
+                now - _cells[index].LastMotionTicks >= staticDelayTicks;
+        }
+
+        // Run the same symmetric cleanup after the timer test. This is important:
+        // an old static border stays dim when a different area changes, while a
+        // tiny recent hole inside that border can still be absorbed by the region.
+        var source = _maskA;
+        var destination = _maskB;
+        for (var pass = 0; pass < _settings.MajorityFilterPasses; pass++)
+        {
+            ApplyBidirectionalMajority(source, destination);
+            (source, destination) = (destination, source);
+        }
+
+        Array.Copy(source, _finalDimMask, source.Length);
+        RemoveSmallStaticIslands(_finalDimMask);
+        FillSmallActiveHoles(_finalDimMask);
+        SuppressDarkRegions(_finalDimMask);
     }
 
     private void SuppressDarkRegions(bool[] mask)
@@ -466,6 +540,52 @@ internal sealed class MonitorSession : IDisposable
                 }
             }
         }
+    }
+
+    private void RebuildUniformRegions()
+    {
+        Array.Fill(_nextRegionMap, -1);
+        var nextRegions = new List<RegionState>();
+        Array.Clear(_visited, 0, _visited.Length);
+
+        for (var start = 0; start < _finalDimMask.Length; start++)
+        {
+            if (!_finalDimMask[start] || _visited[start])
+            {
+                continue;
+            }
+
+            var count = CollectComponent(_finalDimMask, start, true, out _);
+            var overlapCounts = new Dictionary<int, int>();
+            for (var index = 0; index < count; index++)
+            {
+                var oldRegion = _regionMap[_queue[index]];
+                if (oldRegion < 0 || oldRegion >= _regions.Count)
+                {
+                    continue;
+                }
+
+                overlapCounts.TryGetValue(oldRegion, out var overlap);
+                overlapCounts[oldRegion] = overlap + 1;
+            }
+
+            float initialAlpha = 0f;
+            if (overlapCounts.Count > 0)
+            {
+                var bestOldRegion = overlapCounts.MaxBy(static pair => pair.Value).Key;
+                initialAlpha = _regions[bestOldRegion].Alpha;
+            }
+
+            var newRegionId = nextRegions.Count;
+            nextRegions.Add(new RegionState { Alpha = initialAlpha });
+            for (var index = 0; index < count; index++)
+            {
+                _nextRegionMap[_queue[index]] = newRegionId;
+            }
+        }
+
+        (_regionMap, _nextRegionMap) = (_nextRegionMap, _regionMap);
+        _regions = nextRegions;
     }
 
     private int CollectComponent(bool[] mask, int start, bool value, out bool touchesEdge)
@@ -538,33 +658,54 @@ internal sealed class MonitorSession : IDisposable
             var revealEverything = now < _revealAllUntilTicks;
             var maximumOpacity = (float)_settings.MaximumMaskOpacity;
 
+            foreach (var region in _regions)
+            {
+                var oldAlpha = region.Alpha;
+                if (revealEverything)
+                {
+                    var step = (float)(elapsedMs / Math.Max(1, _settings.RevealFadeMilliseconds));
+                    region.Alpha = Math.Max(0f, region.Alpha - step);
+                }
+                else
+                {
+                    var step = (float)(elapsedMs / Math.Max(1, _settings.DarkenFadeMilliseconds));
+                    region.Alpha = Math.Min(maximumOpacity, region.Alpha + step);
+                }
+
+                if (Math.Abs(oldAlpha - region.Alpha) > 0.0005f)
+                {
+                    changed = true;
+                }
+                if ((!revealEverything && region.Alpha < maximumOpacity - 0.001f) ||
+                    (revealEverything && region.Alpha > 0.001f))
+                {
+                    anyAnimating = true;
+                }
+            }
+
             for (var index = 0; index < _cells.Length; index++)
             {
                 var cell = _cells[index];
-                var target = revealEverything || !_finalDimMask[index] ? 0f : maximumOpacity;
-                if (Math.Abs(cell.TargetAlpha - target) > 0.001f)
-                {
-                    cell.TargetAlpha = target;
-                    _maskDirty = true;
-                }
-
                 var oldAlpha = cell.Alpha;
-                if (cell.TargetAlpha < cell.Alpha)
+                var regionId = _regionMap[index];
+
+                if (!revealEverything && regionId >= 0 && regionId < _regions.Count)
+                {
+                    // Every member of the same connected region receives exactly the
+                    // same alpha, eliminating internal bands and grid lines.
+                    cell.Alpha = _regions[regionId].Alpha;
+                }
+                else if (cell.Alpha > 0f)
                 {
                     var step = (float)(elapsedMs / Math.Max(1, _settings.RevealFadeMilliseconds));
-                    cell.Alpha = Math.Max(cell.TargetAlpha, cell.Alpha - step);
-                }
-                else if (cell.TargetAlpha > cell.Alpha)
-                {
-                    var step = (float)(elapsedMs / Math.Max(1, _settings.DarkenFadeMilliseconds));
-                    cell.Alpha = Math.Min(cell.TargetAlpha, cell.Alpha + step);
+                    cell.Alpha = Math.Max(0f, cell.Alpha - step);
                 }
 
                 if (Math.Abs(oldAlpha - cell.Alpha) > 0.0005f)
                 {
                     changed = true;
                 }
-                if (Math.Abs(cell.TargetAlpha - cell.Alpha) > 0.001f)
+                if ((regionId < 0 || revealEverything) && cell.Alpha > 0.001f)
                 {
                     anyAnimating = true;
                 }
