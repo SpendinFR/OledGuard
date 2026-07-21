@@ -30,6 +30,9 @@ internal sealed class MonitorSession : IDisposable
     private readonly byte[] _shortReference;
     private readonly byte[] _mediumReference;
     private readonly byte[] _longReference;
+    private readonly byte[] _dimReference;
+    private readonly bool[] _hasDimReference;
+    private readonly byte[] _dimReferenceChangeStreak;
     private readonly bool[] _rawStatic;
     private readonly bool[] _changedNow;
     private readonly bool[] _maskA;
@@ -101,6 +104,9 @@ internal sealed class MonitorSession : IDisposable
         _shortReference = new byte[sampleBytes];
         _mediumReference = new byte[sampleBytes];
         _longReference = new byte[sampleBytes];
+        _dimReference = new byte[sampleBytes];
+        _hasDimReference = new bool[cellCount];
+        _dimReferenceChangeStreak = new byte[cellCount];
         _rawStatic = new bool[cellCount];
         _changedNow = new bool[cellCount];
         _maskA = new bool[cellCount];
@@ -151,6 +157,9 @@ internal sealed class MonitorSession : IDisposable
             _mediumReferenceTicks = 0;
             _longReferenceTicks = 0;
 
+            Array.Clear(_dimReference, 0, _dimReference.Length);
+            Array.Clear(_hasDimReference, 0, _hasDimReference.Length);
+            Array.Clear(_dimReferenceChangeStreak, 0, _dimReferenceChangeStreak.Length);
             Array.Clear(_rawStatic, 0, _rawStatic.Length);
             Array.Clear(_changedNow, 0, _changedNow.Length);
             Array.Clear(_maskA, 0, _maskA.Length);
@@ -273,6 +282,31 @@ internal sealed class MonitorSession : IDisposable
 
                     _changedNow[index] = immediateChanged || shortChanged;
 
+                    if (_finalDimMask[index] && _hasDimReference[index])
+                    {
+                        var changedFromProtectedImage = CompareCell(
+                            current,
+                            _dimReference,
+                            row,
+                            column,
+                            out _);
+
+                        if (changedFromProtectedImage)
+                        {
+                            _dimReferenceChangeStreak[index] = (byte)Math.Min(
+                                byte.MaxValue,
+                                _dimReferenceChangeStreak[index] + 1);
+                        }
+                        else
+                        {
+                            _dimReferenceChangeStreak[index] = 0;
+                        }
+                    }
+                    else
+                    {
+                        _dimReferenceChangeStreak[index] = 0;
+                    }
+
                     if (_changedNow[index])
                     {
                         cell.LastMotionTicks = now;
@@ -297,6 +331,7 @@ internal sealed class MonitorSession : IDisposable
             }
 
             BuildCleanDimMask();
+            UpdateDimReferences(current);
             Buffer.BlockCopy(current, 0, _previous, 0, current.Length);
 
             if (now - _shortReferenceTicks >= ToStopwatchTicks(_settings.ShortReferenceSeconds * 1000.0))
@@ -380,12 +415,18 @@ internal sealed class MonitorSession : IDisposable
         FillSmallBrightHoles(_finalDimMask);
         SuppressDarkRegions(_finalDimMask);
 
-        // Keep only pixels from the old dim mask whose current content did not
-        // actually move. A window change therefore reveals its new centre while
-        // unchanged taskbars, borders and side areas keep their existing darkness.
         for (var index = 0; index < _finalDimMask.Length; index++)
         {
-            if (_previousDimMask[index] && !_changedNow[index])
+            if (!_previousDimMask[index])
+            {
+                continue;
+            }
+
+            var protectedImageChanged =
+                _hasDimReference[index] &&
+                _dimReferenceChangeStreak[index] >= 2;
+
+            if (!protectedImageChanged)
             {
                 _finalDimMask[index] = true;
             }
@@ -407,10 +448,17 @@ internal sealed class MonitorSession : IDisposable
         FillSmallBrightHoles(_finalDimMask);
         SuppressDarkRegions(_finalDimMask);
 
-        // Confirmed movement is a hard reveal and must never be filled as a hole.
         for (var index = 0; index < _finalDimMask.Length; index++)
         {
-            if (_changedNow[index])
+            if (_previousDimMask[index])
+            {
+                if (_hasDimReference[index] &&
+                    _dimReferenceChangeStreak[index] >= 2)
+                {
+                    _finalDimMask[index] = false;
+                }
+            }
+            else if (_changedNow[index])
             {
                 _finalDimMask[index] = false;
             }
@@ -418,6 +466,56 @@ internal sealed class MonitorSession : IDisposable
 
         RemoveSmallDimIslands(_finalDimMask);
         SuppressDarkRegions(_finalDimMask);
+    }
+
+    private void UpdateDimReferences(byte[] current)
+    {
+        for (var row = 0; row < _rows; row++)
+        {
+            for (var column = 0; column < _columns; column++)
+            {
+                var index = row * _columns + column;
+
+                if (_finalDimMask[index])
+                {
+                    if (!_hasDimReference[index])
+                    {
+                        CopyCellSamples(current, _dimReference, row, column);
+                        _hasDimReference[index] = true;
+                        _dimReferenceChangeStreak[index] = 0;
+                    }
+                    continue;
+                }
+
+                var confirmedProtectedChange =
+                    _previousDimMask[index] &&
+                    _hasDimReference[index] &&
+                    _dimReferenceChangeStreak[index] >= 2;
+
+                if (!_previousDimMask[index] || confirmedProtectedChange)
+                {
+                    _hasDimReference[index] = false;
+                    _dimReferenceChangeStreak[index] = 0;
+                }
+            }
+        }
+    }
+
+    private void CopyCellSamples(
+        byte[] source,
+        byte[] destination,
+        int cellRow,
+        int cellColumn)
+    {
+        var startX = cellColumn * _samplesPerCell;
+        var startY = cellRow * _samplesPerCell;
+        var rowBytes = checked(_samplesPerCell * 4);
+
+        for (var y = 0; y < _samplesPerCell; y++)
+        {
+            var offset = (startY + y) * _sampleStride + startX * 4;
+            Buffer.BlockCopy(source, offset, destination, offset, rowBytes);
+        }
     }
 
     private void ApplyBidirectionalMajority(bool[] source, bool[] destination)
