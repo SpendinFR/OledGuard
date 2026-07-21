@@ -10,18 +10,27 @@ internal sealed class MonitorSession : IDisposable
     private readonly AppSettings _settings;
     private readonly OverlayWindow _overlay;
     private readonly ScreenSampler _sampler;
-    private readonly int _width;
-    private readonly int _height;
-    private readonly int _stride;
+
+    private readonly int _columns;
+    private readonly int _rows;
+    private readonly int _samplesPerCell;
+    private readonly int _sampleWidth;
+    private readonly int _sampleHeight;
+    private readonly int _sampleStride;
+
     private readonly byte[] _previousFrame;
-    private readonly byte[] _previousLuminance;
-    private readonly byte[] _currentLuminance;
-    private readonly byte[] _revealLevel;
-    private readonly bool[] _motion;
-    private readonly bool[] _activity;
-    private readonly bool[] _ink;
-    private readonly bool[] _scratch;
+    private readonly bool[] _rawMotion;
+    private readonly bool[] _expandedMotion;
+    private readonly bool[] _activeRegion;
+    private readonly bool[] _visited;
+    private readonly int[] _queue;
+
+    private readonly long[] _lastMotionTicks;
+    private readonly long[] _motionWindowStartTicks;
+    private readonly byte[] _motionHits;
+    private readonly float[] _reveal;
     private readonly float[] _renderAlpha;
+
     private readonly object _sync = new();
     private readonly DispatcherTimer _renderTimer;
     private readonly CancellationTokenSource _cancellation = new();
@@ -31,52 +40,84 @@ internal sealed class MonitorSession : IDisposable
     private bool _hasPrevious;
     private bool _maskDirty;
     private bool _disposed;
-    private long _lastCaptureTicks;
+    private long _lastRenderTicks;
     private long _revealAllUntilTicks;
     private int _lastCursorX = int.MinValue;
     private int _lastCursorY = int.MinValue;
     private bool _lastRevealAll;
 
-    public MonitorSession(FormsScreen screen, AppSettings settings)
+    public MonitorSession(
+        FormsScreen screen,
+        AppSettings settings)
     {
         _screen = screen;
         _settings = settings;
 
         var bounds = screen.Bounds;
-        var maximumWidth = Math.Clamp(
-            settings.ActiveInkCaptureWidth,
-            640,
-            2560);
-        var scale = Math.Min(
-            1.0,
-            maximumWidth / (double)Math.Max(1, bounds.Width));
-
-        _width = Math.Max(
+        var requestedWidth = Math.Min(
+            bounds.Width,
+            settings.MotionZoneCaptureWidth);
+        var requestedHeight = Math.Max(
             1,
-            (int)Math.Round(bounds.Width * scale));
-        _height = Math.Max(
+            (int)Math.Round(
+                bounds.Height *
+                requestedWidth /
+                (double)Math.Max(1, bounds.Width)));
+
+        _samplesPerCell =
+            settings.MotionZoneSamplesPerCell;
+        _columns = Math.Max(
             1,
-            (int)Math.Round(bounds.Height * scale));
-        _stride = checked(_width * 4);
+            (int)Math.Ceiling(
+                requestedWidth /
+                (double)_samplesPerCell));
+        _rows = Math.Max(
+            1,
+            (int)Math.Ceiling(
+                requestedHeight /
+                (double)_samplesPerCell));
 
-        var pixelCount = checked(_width * _height);
-        var frameBytes = checked(_stride * _height);
+        _sampleWidth = checked(
+            _columns * _samplesPerCell);
+        _sampleHeight = checked(
+            _rows * _samplesPerCell);
+        _sampleStride = checked(
+            _sampleWidth * 4);
 
-        _previousFrame = new byte[frameBytes];
-        _previousLuminance = new byte[pixelCount];
-        _currentLuminance = new byte[pixelCount];
-        _revealLevel = new byte[pixelCount];
-        _motion = new bool[pixelCount];
-        _activity = new bool[pixelCount];
-        _ink = new bool[pixelCount];
-        _scratch = new bool[pixelCount];
-        _renderAlpha = new float[pixelCount];
+        var cellCount = checked(
+            _columns * _rows);
+        var frameBytes = checked(
+            _sampleStride * _sampleHeight);
+
+        _previousFrame =
+            new byte[frameBytes];
+        _rawMotion =
+            new bool[cellCount];
+        _expandedMotion =
+            new bool[cellCount];
+        _activeRegion =
+            new bool[cellCount];
+        _visited =
+            new bool[cellCount];
+        _queue =
+            new int[cellCount];
+
+        _lastMotionTicks =
+            new long[cellCount];
+        _motionWindowStartTicks =
+            new long[cellCount];
+        _motionHits =
+            new byte[cellCount];
+        _reveal =
+            new float[cellCount];
+        _renderAlpha =
+            new float[cellCount];
 
         _overlay = new OverlayWindow(screen);
         _sampler = new ScreenSampler(
             bounds,
-            _width,
-            _height);
+            _sampleWidth,
+            _sampleHeight);
 
         _renderTimer = new DispatcherTimer(
             DispatcherPriority.Render)
@@ -93,7 +134,8 @@ internal sealed class MonitorSession : IDisposable
     {
         _overlay.EnsureVisible();
         SetEnabled(enabled);
-        _captureLoop = Task.Run(CaptureLoopAsync);
+        _captureLoop =
+            Task.Run(CaptureLoopAsync);
         _renderTimer.Start();
     }
 
@@ -104,7 +146,7 @@ internal sealed class MonitorSession : IDisposable
             _enabled = enabled;
             _hasPrevious = false;
             _maskDirty = true;
-            _lastCaptureTicks = 0;
+            _lastRenderTicks = 0;
             _lastCursorX = int.MinValue;
             _lastCursorY = int.MinValue;
             _lastRevealAll = false;
@@ -114,37 +156,41 @@ internal sealed class MonitorSession : IDisposable
                 0,
                 _previousFrame.Length);
             Array.Clear(
-                _previousLuminance,
+                _rawMotion,
                 0,
-                _previousLuminance.Length);
+                _rawMotion.Length);
             Array.Clear(
-                _currentLuminance,
+                _expandedMotion,
                 0,
-                _currentLuminance.Length);
+                _expandedMotion.Length);
             Array.Clear(
-                _revealLevel,
+                _activeRegion,
                 0,
-                _revealLevel.Length);
+                _activeRegion.Length);
             Array.Clear(
-                _motion,
+                _visited,
                 0,
-                _motion.Length);
+                _visited.Length);
             Array.Clear(
-                _activity,
+                _lastMotionTicks,
                 0,
-                _activity.Length);
+                _lastMotionTicks.Length);
             Array.Clear(
-                _ink,
+                _motionWindowStartTicks,
                 0,
-                _ink.Length);
+                _motionWindowStartTicks.Length);
             Array.Clear(
-                _scratch,
+                _motionHits,
                 0,
-                _scratch.Length);
+                _motionHits.Length);
+            Array.Clear(
+                _reveal,
+                0,
+                _reveal.Length);
 
             var now = Stopwatch.GetTimestamp();
             _revealAllUntilTicks = enabled
-                ? now + ToStopwatchTicks(1500)
+                ? now + ToStopwatchTicks(1000)
                 : now;
         }
 
@@ -157,7 +203,8 @@ internal sealed class MonitorSession : IDisposable
         {
             _revealAllUntilTicks =
                 Stopwatch.GetTimestamp() +
-                ToStopwatchTicks(duration.TotalMilliseconds);
+                ToStopwatchTicks(
+                    duration.TotalMilliseconds);
             _maskDirty = true;
         }
     }
@@ -177,12 +224,14 @@ internal sealed class MonitorSession : IDisposable
 
                 if (shouldCapture)
                 {
-                    AnalyzeCapture(_sampler.Capture());
+                    AnalyzeCapture(
+                        _sampler.Capture());
                 }
 
                 await Task.Delay(
-                    _settings.ActiveInkSamplingMilliseconds,
-                    _cancellation.Token).ConfigureAwait(false);
+                    _settings.MotionZoneSamplingMilliseconds,
+                    _cancellation.Token)
+                    .ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -192,7 +241,8 @@ internal sealed class MonitorSession : IDisposable
             {
                 await Task.Delay(
                     1000,
-                    _cancellation.Token).ConfigureAwait(false);
+                    _cancellation.Token)
+                    .ConfigureAwait(false);
             }
         }
     }
@@ -208,8 +258,6 @@ internal sealed class MonitorSession : IDisposable
                 return;
             }
 
-            FillLuminance(current, _currentLuminance);
-
             if (!_hasPrevious)
             {
                 Buffer.BlockCopy(
@@ -218,48 +266,14 @@ internal sealed class MonitorSession : IDisposable
                     _previousFrame,
                     0,
                     current.Length);
-                Buffer.BlockCopy(
-                    _currentLuminance,
-                    0,
-                    _previousLuminance,
-                    0,
-                    _currentLuminance.Length);
                 _hasPrevious = true;
-                _lastCaptureTicks = now;
-                _maskDirty = true;
                 return;
             }
 
-            var elapsedMilliseconds =
-                _lastCaptureTicks == 0
-                    ? _settings.ActiveInkSamplingMilliseconds
-                    : FromStopwatchTicks(
-                        now - _lastCaptureTicks);
-            _lastCaptureTicks = now;
-
-            DecayRevealLevels(elapsedMilliseconds);
             DetectMotion(current);
-            Dilate(
-                _motion,
-                _activity,
-                _scratch,
-                _settings.ActiveInkActivityRadius);
-            DetectActiveInk();
-            Dilate(
-                _ink,
-                _activity,
-                _scratch,
-                _settings.ActiveInkInkRadius);
-
-            for (var index = 0;
-                 index < _revealLevel.Length;
-                 index++)
-            {
-                if (_activity[index])
-                {
-                    _revealLevel[index] = byte.MaxValue;
-                }
-            }
+            ExpandMotion();
+            BuildCleanActivityRegions();
+            UpdateMotionHistory(now);
 
             Buffer.BlockCopy(
                 current,
@@ -267,278 +281,351 @@ internal sealed class MonitorSession : IDisposable
                 _previousFrame,
                 0,
                 current.Length);
-            Buffer.BlockCopy(
-                _currentLuminance,
-                0,
-                _previousLuminance,
-                0,
-                _currentLuminance.Length);
 
             _maskDirty = true;
-        }
-    }
-
-    private void FillLuminance(
-        byte[] frame,
-        byte[] luminance)
-    {
-        for (var index = 0;
-             index < luminance.Length;
-             index++)
-        {
-            var offset = index * 4;
-            var blue = frame[offset];
-            var green = frame[offset + 1];
-            var red = frame[offset + 2];
-
-            luminance[index] = (byte)(
-                (red * 54L +
-                 green * 183L +
-                 blue * 19L) >> 8);
-        }
-    }
-
-    private void DecayRevealLevels(
-        double elapsedMilliseconds)
-    {
-        var holdMilliseconds = Math.Max(
-            100,
-            _settings.ActiveInkHoldMilliseconds);
-        var decay = Math.Clamp(
-            (int)Math.Ceiling(
-                byte.MaxValue *
-                elapsedMilliseconds /
-                holdMilliseconds),
-            1,
-            byte.MaxValue);
-
-        for (var index = 0;
-             index < _revealLevel.Length;
-             index++)
-        {
-            var value = _revealLevel[index];
-            _revealLevel[index] = value <= decay
-                ? (byte)0
-                : (byte)(value - decay);
         }
     }
 
     private void DetectMotion(byte[] current)
     {
         Array.Clear(
-            _motion,
+            _rawMotion,
             0,
-            _motion.Length);
+            _rawMotion.Length);
 
-        var threshold =
-            _settings.ActiveInkMotionThreshold;
-
-        for (var index = 0;
-             index < _motion.Length;
-             index++)
-        {
-            var offset = index * 4;
-            var blueDifference = Math.Abs(
-                current[offset] -
-                _previousFrame[offset]);
-            var greenDifference = Math.Abs(
-                current[offset + 1] -
-                _previousFrame[offset + 1]);
-            var redDifference = Math.Abs(
-                current[offset + 2] -
-                _previousFrame[offset + 2]);
-            var luminanceDifference = Math.Abs(
-                _currentLuminance[index] -
-                _previousLuminance[index]);
-
-            _motion[index] =
-                Math.Max(
-                    redDifference,
-                    Math.Max(
-                        greenDifference,
-                        blueDifference)) >= threshold ||
-                luminanceDifference >=
-                    Math.Max(3, threshold - 3);
-        }
-    }
-
-    private void DetectActiveInk()
-    {
-        Array.Clear(
-            _ink,
-            0,
-            _ink.Length);
-
-        var edgeThreshold =
-            _settings.ActiveInkEdgeThreshold;
-
-        for (var row = 1;
-             row < _height - 1;
-             row++)
-        {
-            var rowOffset = row * _width;
-
-            for (var column = 1;
-                 column < _width - 1;
-                 column++)
-            {
-                var index = rowOffset + column;
-
-                if (!_activity[index])
-                {
-                    continue;
-                }
-
-                if (_motion[index])
-                {
-                    _ink[index] = true;
-                    continue;
-                }
-
-                var value = _currentLuminance[index];
-                var left = _currentLuminance[index - 1];
-                var right = _currentLuminance[index + 1];
-                var top =
-                    _currentLuminance[index - _width];
-                var bottom =
-                    _currentLuminance[index + _width];
-
-                var maximumNeighbourDifference =
-                    Math.Max(
-                        Math.Abs(value - left),
-                        Math.Max(
-                            Math.Abs(value - right),
-                            Math.Max(
-                                Math.Abs(value - top),
-                                Math.Abs(value - bottom))));
-
-                var neighbourAverage =
-                    (left + right + top + bottom) / 4;
-                var localContrast = Math.Abs(
-                    value - neighbourAverage);
-
-                _ink[index] =
-                    maximumNeighbourDifference >=
-                        edgeThreshold ||
-                    localContrast >=
-                        Math.Max(4, edgeThreshold - 3);
-            }
-        }
-    }
-
-    private void Dilate(
-        bool[] source,
-        bool[] destination,
-        bool[] temporary,
-        int radius)
-    {
-        if (radius <= 0)
-        {
-            Array.Copy(
-                source,
-                destination,
-                source.Length);
-            return;
-        }
-
-        Array.Clear(
-            temporary,
-            0,
-            temporary.Length);
-        Array.Clear(
-            destination,
-            0,
-            destination.Length);
+        var pixelThreshold =
+            _settings.MotionZonePixelThreshold;
+        var sampleCount =
+            _samplesPerCell *
+            _samplesPerCell;
+        var minimumChangedSamples = Math.Max(
+            1,
+            (int)Math.Ceiling(
+                sampleCount *
+                _settings.MotionZoneChangedFraction));
 
         for (var row = 0;
-             row < _height;
+             row < _rows;
              row++)
         {
-            var rowStart = row * _width;
-            var activeCount = 0;
+            var sampleStartY =
+                row * _samplesPerCell;
 
             for (var column = 0;
-                 column <= Math.Min(
-                     _width - 1,
-                     radius);
+                 column < _columns;
                  column++)
             {
-                if (source[rowStart + column])
+                var sampleStartX =
+                    column * _samplesPerCell;
+                var changedSamples = 0;
+                var maximumDifference = 0;
+                var differenceTotal = 0;
+
+                for (var y = 0;
+                     y < _samplesPerCell;
+                     y++)
                 {
-                    activeCount++;
+                    var rowOffset =
+                        (sampleStartY + y) *
+                        _sampleStride;
+
+                    for (var x = 0;
+                         x < _samplesPerCell;
+                         x++)
+                    {
+                        var offset =
+                            rowOffset +
+                            (sampleStartX + x) * 4;
+
+                        var blueDifference = Math.Abs(
+                            current[offset] -
+                            _previousFrame[offset]);
+                        var greenDifference = Math.Abs(
+                            current[offset + 1] -
+                            _previousFrame[offset + 1]);
+                        var redDifference = Math.Abs(
+                            current[offset + 2] -
+                            _previousFrame[offset + 2]);
+
+                        var difference = Math.Max(
+                            redDifference,
+                            Math.Max(
+                                greenDifference,
+                                blueDifference));
+
+                        differenceTotal += difference;
+                        maximumDifference = Math.Max(
+                            maximumDifference,
+                            difference);
+
+                        if (difference >= pixelThreshold)
+                        {
+                            changedSamples++;
+                        }
+                    }
                 }
+
+                var meanDifference =
+                    differenceTotal /
+                    (double)sampleCount;
+
+                _rawMotion[
+                    row * _columns +
+                    column] =
+                    changedSamples >=
+                        minimumChangedSamples ||
+                    maximumDifference >=
+                        pixelThreshold * 2 ||
+                    meanDifference >=
+                        pixelThreshold * 0.55;
             }
+        }
+    }
 
+    private void ExpandMotion()
+    {
+        Array.Clear(
+            _expandedMotion,
+            0,
+            _expandedMotion.Length);
+
+        var radius =
+            _settings.MotionZoneMergeRadiusCells;
+
+        for (var row = 0;
+             row < _rows;
+             row++)
+        {
             for (var column = 0;
-                 column < _width;
+                 column < _columns;
                  column++)
             {
-                temporary[rowStart + column] =
-                    activeCount > 0;
+                var index =
+                    row * _columns +
+                    column;
 
-                var removeColumn =
-                    column - radius;
-                if (removeColumn >= 0 &&
-                    source[rowStart + removeColumn])
+                if (!_rawMotion[index])
                 {
-                    activeCount--;
+                    continue;
                 }
 
-                var addColumn =
-                    column + radius + 1;
-                if (addColumn < _width &&
-                    source[rowStart + addColumn])
+                for (var offsetY = -radius;
+                     offsetY <= radius;
+                     offsetY++)
                 {
-                    activeCount++;
+                    var targetRow =
+                        row + offsetY;
+
+                    if (targetRow < 0 ||
+                        targetRow >= _rows)
+                    {
+                        continue;
+                    }
+
+                    for (var offsetX = -radius;
+                         offsetX <= radius;
+                         offsetX++)
+                    {
+                        var targetColumn =
+                            column + offsetX;
+
+                        if (targetColumn < 0 ||
+                            targetColumn >= _columns)
+                        {
+                            continue;
+                        }
+
+                        _expandedMotion[
+                            targetRow * _columns +
+                            targetColumn] = true;
+                    }
                 }
             }
         }
+    }
 
-        for (var column = 0;
-             column < _width;
-             column++)
+    private void BuildCleanActivityRegions()
+    {
+        Array.Clear(
+            _activeRegion,
+            0,
+            _activeRegion.Length);
+        Array.Clear(
+            _visited,
+            0,
+            _visited.Length);
+
+        var padding =
+            _settings.MotionZonePaddingCells;
+
+        for (var start = 0;
+             start < _expandedMotion.Length;
+             start++)
         {
-            var activeCount = 0;
-
-            for (var row = 0;
-                 row <= Math.Min(
-                     _height - 1,
-                     radius);
-                 row++)
+            if (!_expandedMotion[start] ||
+                _visited[start])
             {
-                if (temporary[row * _width + column])
+                continue;
+            }
+
+            var head = 0;
+            var tail = 0;
+            _queue[tail++] = start;
+            _visited[start] = true;
+
+            var minimumRow =
+                start / _columns;
+            var maximumRow =
+                minimumRow;
+            var minimumColumn =
+                start % _columns;
+            var maximumColumn =
+                minimumColumn;
+            var rawMotionCells = 0;
+
+            while (head < tail)
+            {
+                var index =
+                    _queue[head++];
+                var row =
+                    index / _columns;
+                var column =
+                    index % _columns;
+
+                minimumRow = Math.Min(
+                    minimumRow,
+                    row);
+                maximumRow = Math.Max(
+                    maximumRow,
+                    row);
+                minimumColumn = Math.Min(
+                    minimumColumn,
+                    column);
+                maximumColumn = Math.Max(
+                    maximumColumn,
+                    column);
+
+                if (_rawMotion[index])
                 {
-                    activeCount++;
+                    rawMotionCells++;
+                }
+
+                for (var offsetY = -1;
+                     offsetY <= 1;
+                     offsetY++)
+                {
+                    var neighbourRow =
+                        row + offsetY;
+
+                    if (neighbourRow < 0 ||
+                        neighbourRow >= _rows)
+                    {
+                        continue;
+                    }
+
+                    for (var offsetX = -1;
+                         offsetX <= 1;
+                         offsetX++)
+                    {
+                        if (offsetX == 0 &&
+                            offsetY == 0)
+                        {
+                            continue;
+                        }
+
+                        var neighbourColumn =
+                            column + offsetX;
+
+                        if (neighbourColumn < 0 ||
+                            neighbourColumn >= _columns)
+                        {
+                            continue;
+                        }
+
+                        var neighbourIndex =
+                            neighbourRow *
+                            _columns +
+                            neighbourColumn;
+
+                        if (!_visited[neighbourIndex] &&
+                            _expandedMotion[
+                                neighbourIndex])
+                        {
+                            _visited[
+                                neighbourIndex] = true;
+                            _queue[tail++] =
+                                neighbourIndex;
+                        }
+                    }
                 }
             }
 
-            for (var row = 0;
-                 row < _height;
+            if (rawMotionCells == 0)
+            {
+                continue;
+            }
+
+            minimumRow = Math.Max(
+                0,
+                minimumRow - padding);
+            maximumRow = Math.Min(
+                _rows - 1,
+                maximumRow + padding);
+            minimumColumn = Math.Max(
+                0,
+                minimumColumn - padding);
+            maximumColumn = Math.Min(
+                _columns - 1,
+                maximumColumn + padding);
+
+            for (var row = minimumRow;
+                 row <= maximumRow;
                  row++)
             {
-                destination[row * _width + column] =
-                    activeCount > 0;
-
-                var removeRow =
-                    row - radius;
-                if (removeRow >= 0 &&
-                    temporary[
-                        removeRow * _width +
-                        column])
+                for (var column = minimumColumn;
+                     column <= maximumColumn;
+                     column++)
                 {
-                    activeCount--;
-                }
-
-                var addRow =
-                    row + radius + 1;
-                if (addRow < _height &&
-                    temporary[
-                        addRow * _width +
-                        column])
-                {
-                    activeCount++;
+                    _activeRegion[
+                        row * _columns +
+                        column] = true;
                 }
             }
+        }
+    }
+
+    private void UpdateMotionHistory(long now)
+    {
+        var windowTicks = ToStopwatchTicks(
+            _settings.MotionZoneRecurringWindowMilliseconds);
+
+        for (var index = 0;
+             index < _activeRegion.Length;
+             index++)
+        {
+            if (!_activeRegion[index])
+            {
+                continue;
+            }
+
+            var windowStart =
+                _motionWindowStartTicks[index];
+
+            if (windowStart == 0 ||
+                now - windowStart >
+                    windowTicks)
+            {
+                _motionWindowStartTicks[index] =
+                    now;
+                _motionHits[index] = 1;
+            }
+            else if (_motionHits[index] <
+                     byte.MaxValue)
+            {
+                _motionHits[index]++;
+            }
+
+            _lastMotionTicks[index] = now;
         }
     }
 
@@ -546,30 +633,42 @@ internal sealed class MonitorSession : IDisposable
         object? sender,
         EventArgs e)
     {
-        NativeMethods.GetCursorPos(out var cursor);
-        var revealAll = false;
+        var now = Stopwatch.GetTimestamp();
+        NativeMethods.GetCursorPos(
+            out var cursor);
+
         var shouldPush = false;
 
         lock (_sync)
         {
-            revealAll =
-                _enabled &&
-                Stopwatch.GetTimestamp() <
-                    _revealAllUntilTicks;
+            var elapsedMilliseconds =
+                _lastRenderTicks == 0
+                    ? _renderTimer.Interval
+                        .TotalMilliseconds
+                    : FromStopwatchTicks(
+                        now - _lastRenderTicks);
+            _lastRenderTicks = now;
 
+            var changed = UpdateReveal(
+                now,
+                elapsedMilliseconds);
+            var revealAll =
+                _enabled &&
+                now < _revealAllUntilTicks;
             var cursorChanged =
                 cursor.X != _lastCursorX ||
                 cursor.Y != _lastCursorY;
 
             shouldPush =
+                changed ||
                 _maskDirty ||
                 cursorChanged ||
                 revealAll != _lastRevealAll;
 
+            _maskDirty = false;
             _lastCursorX = cursor.X;
             _lastCursorY = cursor.Y;
             _lastRevealAll = revealAll;
-            _maskDirty = false;
         }
 
         if (shouldPush)
@@ -578,13 +677,108 @@ internal sealed class MonitorSession : IDisposable
         }
     }
 
+    private bool UpdateReveal(
+        long now,
+        double elapsedMilliseconds)
+    {
+        if (!_enabled)
+        {
+            return false;
+        }
+
+        var changed = false;
+        var oneShotHoldTicks =
+            ToStopwatchTicks(
+                _settings.MotionZoneOneShotHoldMilliseconds);
+        var recurringWindowTicks =
+            ToStopwatchTicks(
+                _settings.MotionZoneRecurringWindowMilliseconds);
+        var recurringHoldTicks =
+            ToStopwatchTicks(
+                _settings.MotionZoneRecurringHoldMilliseconds);
+
+        for (var index = 0;
+             index < _reveal.Length;
+             index++)
+        {
+            var lastMotion =
+                _lastMotionTicks[index];
+            var windowStart =
+                _motionWindowStartTicks[index];
+
+            if (windowStart > 0 &&
+                now - windowStart >
+                    recurringWindowTicks)
+            {
+                _motionWindowStartTicks[index] =
+                    0;
+                _motionHits[index] = 0;
+                windowStart = 0;
+            }
+
+            var recurring =
+                lastMotion > 0 &&
+                windowStart > 0 &&
+                _motionHits[index] >=
+                    _settings.MotionZoneRecurringHits &&
+                now - lastMotion <=
+                    recurringHoldTicks;
+
+            var oneShot =
+                lastMotion > 0 &&
+                now - lastMotion <=
+                    oneShotHoldTicks;
+
+            var target =
+                recurring || oneShot
+                    ? 1f
+                    : 0f;
+            var current =
+                _reveal[index];
+
+            var duration =
+                target > current
+                    ? _settings
+                        .MotionZoneRevealFadeMilliseconds
+                    : _settings
+                        .MotionZoneReturnFadeMilliseconds;
+            var step =
+                duration <= 0
+                    ? 1f
+                    : (float)(
+                        elapsedMilliseconds /
+                        duration);
+            var next =
+                target > current
+                    ? Math.Min(
+                        target,
+                        current + step)
+                    : Math.Max(
+                        target,
+                        current - step);
+
+            if (Math.Abs(
+                    next - current) >
+                0.0005f)
+            {
+                _reveal[index] = next;
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
     private void PushMask()
     {
         lock (_sync)
         {
-            if (!_enabled ||
+            var revealAll =
+                !_enabled ||
                 Stopwatch.GetTimestamp() <
-                    _revealAllUntilTicks)
+                    _revealAllUntilTicks;
+
+            if (revealAll)
             {
                 Array.Clear(
                     _renderAlpha,
@@ -594,18 +788,16 @@ internal sealed class MonitorSession : IDisposable
             else
             {
                 var maximumOpacity =
-                    (float)_settings.MaximumMaskOpacity;
+                    (float)_settings
+                        .MaximumMaskOpacity;
 
                 for (var index = 0;
                      index < _renderAlpha.Length;
                      index++)
                 {
-                    var reveal =
-                        _revealLevel[index] /
-                        (float)byte.MaxValue;
                     _renderAlpha[index] =
                         maximumOpacity *
-                        (1f - reveal);
+                        (1f - _reveal[index]);
                 }
 
                 ApplyCurrentMouseReveal();
@@ -614,8 +806,8 @@ internal sealed class MonitorSession : IDisposable
 
         _overlay.SetMask(
             _renderAlpha,
-            _width,
-            _height);
+            _columns,
+            _rows);
     }
 
     private void ApplyCurrentMouseReveal()
@@ -635,98 +827,92 @@ internal sealed class MonitorSession : IDisposable
             return;
         }
 
-        var scaleX =
-            _width /
-            (double)Math.Max(1, bounds.Width);
-        var scaleY =
-            _height /
-            (double)Math.Max(1, bounds.Height);
-        var centerX =
-            (cursor.X - bounds.Left) * scaleX;
-        var centerY =
-            (cursor.Y - bounds.Top) * scaleY;
-
-        var outerRadiusPixels = Math.Max(
+        var centerColumn =
+            (cursor.X - bounds.Left) *
+            _columns /
+            (double)Math.Max(
+                1,
+                bounds.Width);
+        var centerRow =
+            (cursor.Y - bounds.Top) *
+            _rows /
+            (double)Math.Max(
+                1,
+                bounds.Height);
+        var cellWidth =
+            bounds.Width /
+            (double)_columns;
+        var cellHeight =
+            bounds.Height /
+            (double)_rows;
+        var radiusPixels = Math.Max(
             12,
             _settings.MouseRevealRadiusPixels);
-        var innerRadiusPixels =
-            outerRadiusPixels * 0.55;
-        var radiusX =
-            outerRadiusPixels * scaleX;
-        var radiusY =
-            outerRadiusPixels * scaleY;
+        var radiusColumns =
+            radiusPixels /
+            Math.Max(
+                1.0,
+                cellWidth);
+        var radiusRows =
+            radiusPixels /
+            Math.Max(
+                1.0,
+                cellHeight);
 
         var minimumColumn = Math.Clamp(
-            (int)Math.Floor(centerX - radiusX),
+            (int)Math.Floor(
+                centerColumn -
+                radiusColumns),
             0,
-            _width - 1);
+            _columns - 1);
         var maximumColumn = Math.Clamp(
-            (int)Math.Ceiling(centerX + radiusX),
+            (int)Math.Ceiling(
+                centerColumn +
+                radiusColumns),
             0,
-            _width - 1);
+            _columns - 1);
         var minimumRow = Math.Clamp(
-            (int)Math.Floor(centerY - radiusY),
+            (int)Math.Floor(
+                centerRow -
+                radiusRows),
             0,
-            _height - 1);
+            _rows - 1);
         var maximumRow = Math.Clamp(
-            (int)Math.Ceiling(centerY + radiusY),
+            (int)Math.Ceiling(
+                centerRow +
+                radiusRows),
             0,
-            _height - 1);
+            _rows - 1);
 
         for (var row = minimumRow;
              row <= maximumRow;
              row++)
         {
-            var physicalY =
-                (row + 0.5 - centerY) /
-                Math.Max(0.0001, scaleY);
+            var y =
+                (row + 0.5 -
+                 centerRow) *
+                cellHeight;
 
             for (var column = minimumColumn;
                  column <= maximumColumn;
                  column++)
             {
-                var physicalX =
-                    (column + 0.5 - centerX) /
-                    Math.Max(0.0001, scaleX);
+                var x =
+                    (column + 0.5 -
+                     centerColumn) *
+                    cellWidth;
                 var distance = Math.Sqrt(
-                    physicalX * physicalX +
-                    physicalY * physicalY);
+                    x * x +
+                    y * y);
 
-                if (distance >= outerRadiusPixels)
+                if (distance <= radiusPixels)
                 {
-                    continue;
+                    _renderAlpha[
+                        row * _columns +
+                        column] = 0f;
                 }
-
-                var maskFactor =
-                    distance <= innerRadiusPixels
-                        ? 0f
-                        : SmoothStep(
-                            (float)(
-                                (distance -
-                                 innerRadiusPixels) /
-                                Math.Max(
-                                    1.0,
-                                    outerRadiusPixels -
-                                    innerRadiusPixels)));
-
-                var index =
-                    row * _width +
-                    column;
-                _renderAlpha[index] *=
-                    maskFactor;
             }
         }
-    }
-
-    private static float SmoothStep(float value)
-    {
-        var clamped = Math.Clamp(
-            value,
-            0f,
-            1f);
-        return clamped *
-               clamped *
-               (3f - 2f * clamped);
     }
 
     private static long ToStopwatchTicks(

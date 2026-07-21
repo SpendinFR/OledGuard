@@ -46,14 +46,21 @@ public sealed class AppSettings
     // after its local content stops moving. New locations keep the full delay.
     public int PreviouslyDimmedReapplySeconds { get; set; } = 8;
 
-    // Experimental inverted active-ink engine.
-    public int ActiveInkCaptureWidth { get; set; } = 1920;
-    public int ActiveInkSamplingMilliseconds { get; set; } = 80;
-    public int ActiveInkMotionThreshold { get; set; } = 10;
-    public int ActiveInkEdgeThreshold { get; set; } = 12;
-    public int ActiveInkActivityRadius { get; set; } = 3;
-    public int ActiveInkInkRadius { get; set; } = 2;
-    public int ActiveInkHoldMilliseconds { get; set; } = 700;
+    // Inverted motion-zone prototype. It reveals clean content regions rather
+    // than individual pixels or edges.
+    public int MotionZoneCaptureWidth { get; set; } = 1280;
+    public int MotionZoneSamplesPerCell { get; set; } = 4;
+    public int MotionZoneSamplingMilliseconds { get; set; } = 60;
+    public int MotionZonePixelThreshold { get; set; } = 12;
+    public double MotionZoneChangedFraction { get; set; } = 0.08;
+    public int MotionZoneMergeRadiusCells { get; set; } = 1;
+    public int MotionZonePaddingCells { get; set; } = 1;
+    public int MotionZoneOneShotHoldMilliseconds { get; set; } = 260;
+    public int MotionZoneRecurringWindowMilliseconds { get; set; } = 1800;
+    public int MotionZoneRecurringHits { get; set; } = 3;
+    public int MotionZoneRecurringHoldMilliseconds { get; set; } = 1100;
+    public int MotionZoneRevealFadeMilliseconds { get; set; } = 70;
+    public int MotionZoneReturnFadeMilliseconds { get; set; } = 280;
 
     // Mouse engine copied from build 3 (v0.5.0 / e1ddf1ed).
     public int MouseRevealRadiusPixels { get; set; } = 40;
@@ -115,13 +122,19 @@ public sealed class AppSettings
 
         if (SchemaVersion < 33)
         {
-            ActiveInkCaptureWidth = 1920;
-            ActiveInkSamplingMilliseconds = 80;
-            ActiveInkMotionThreshold = 10;
-            ActiveInkEdgeThreshold = 12;
-            ActiveInkActivityRadius = 3;
-            ActiveInkInkRadius = 2;
-            ActiveInkHoldMilliseconds = 700;
+            MotionZoneCaptureWidth = 1280;
+            MotionZoneSamplesPerCell = 4;
+            MotionZoneSamplingMilliseconds = 60;
+            MotionZonePixelThreshold = 12;
+            MotionZoneChangedFraction = 0.08;
+            MotionZoneMergeRadiusCells = 1;
+            MotionZonePaddingCells = 1;
+            MotionZoneOneShotHoldMilliseconds = 260;
+            MotionZoneRecurringWindowMilliseconds = 1800;
+            MotionZoneRecurringHits = 3;
+            MotionZoneRecurringHoldMilliseconds = 1100;
+            MotionZoneRevealFadeMilliseconds = 70;
+            MotionZoneReturnFadeMilliseconds = 280;
         }
 
         SchemaVersion = CurrentSchemaVersion;
@@ -157,34 +170,58 @@ public sealed class AppSettings
             2,
             120);
 
-        ActiveInkCaptureWidth = Math.Clamp(
-            ActiveInkCaptureWidth,
+        MotionZoneCaptureWidth = Math.Clamp(
+            MotionZoneCaptureWidth,
             640,
-            2560);
-        ActiveInkSamplingMilliseconds = Math.Clamp(
-            ActiveInkSamplingMilliseconds,
+            1920);
+        MotionZoneSamplesPerCell = Math.Clamp(
+            MotionZoneSamplesPerCell,
+            2,
+            8);
+        MotionZoneSamplingMilliseconds = Math.Clamp(
+            MotionZoneSamplingMilliseconds,
             40,
             250);
-        ActiveInkMotionThreshold = Math.Clamp(
-            ActiveInkMotionThreshold,
+        MotionZonePixelThreshold = Math.Clamp(
+            MotionZonePixelThreshold,
             3,
             80);
-        ActiveInkEdgeThreshold = Math.Clamp(
-            ActiveInkEdgeThreshold,
-            3,
-            80);
-        ActiveInkActivityRadius = Math.Clamp(
-            ActiveInkActivityRadius,
+        MotionZoneChangedFraction = Math.Clamp(
+            MotionZoneChangedFraction,
+            0.01,
+            1.0);
+        MotionZoneMergeRadiusCells = Math.Clamp(
+            MotionZoneMergeRadiusCells,
             0,
-            12);
-        ActiveInkInkRadius = Math.Clamp(
-            ActiveInkInkRadius,
+            4);
+        MotionZonePaddingCells = Math.Clamp(
+            MotionZonePaddingCells,
             0,
-            8);
-        ActiveInkHoldMilliseconds = Math.Clamp(
-            ActiveInkHoldMilliseconds,
-            100,
+            6);
+        MotionZoneOneShotHoldMilliseconds = Math.Clamp(
+            MotionZoneOneShotHoldMilliseconds,
+            60,
+            2000);
+        MotionZoneRecurringWindowMilliseconds = Math.Clamp(
+            MotionZoneRecurringWindowMilliseconds,
+            300,
             5000);
+        MotionZoneRecurringHits = Math.Clamp(
+            MotionZoneRecurringHits,
+            2,
+            20);
+        MotionZoneRecurringHoldMilliseconds = Math.Clamp(
+            MotionZoneRecurringHoldMilliseconds,
+            200,
+            5000);
+        MotionZoneRevealFadeMilliseconds = Math.Clamp(
+            MotionZoneRevealFadeMilliseconds,
+            20,
+            1000);
+        MotionZoneReturnFadeMilliseconds = Math.Clamp(
+            MotionZoneReturnFadeMilliseconds,
+            50,
+            3000);
 
         MouseRevealRadiusPixels = Math.Clamp(MouseRevealRadiusPixels, 0, 200);
         MouseFeatherRadiusPixels = Math.Clamp(MouseFeatherRadiusPixels, 1, 240);
