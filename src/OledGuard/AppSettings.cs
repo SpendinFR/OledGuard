@@ -5,7 +5,7 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 38;
+    public const int CurrentSchemaVersion = 39;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
@@ -68,6 +68,8 @@ public sealed class AppSettings
     public int MotionZoneRecurringMinimumSpanMilliseconds { get; set; } = 180;
     public int MotionZoneRecurringHits { get; set; } = 3;
     public int MotionZoneRecurringHoldMilliseconds { get; set; } = 30000;
+    public int MotionZoneDimDurationMilliseconds { get; set; } = 4000;
+    public int MotionZoneDimSteps { get; set; } = 5;
     public int MotionZoneRevealFadeMilliseconds { get; set; } = 20;
     public int MotionZoneReturnFadeMilliseconds { get; set; } = 50;
     public int MotionZoneTrackingGapCells { get; set; } = 8;
@@ -192,6 +194,12 @@ public sealed class AppSettings
             MouseHoverRadiusPixels = 18;
         }
 
+        if (SchemaVersion < 39)
+        {
+            MotionZoneDimDurationMilliseconds = 4000;
+            MotionZoneDimSteps = 5;
+        }
+
         SchemaVersion = CurrentSchemaVersion;
     }
 
@@ -209,6 +217,12 @@ public sealed class AppSettings
             MotionZoneGeometryRefreshMilliseconds = 700;
             MotionZoneSceneSettleMilliseconds = 180;
             MouseHoverRadiusPixels = 18;
+        }
+
+        if (SchemaVersion < 39)
+        {
+            MotionZoneDimDurationMilliseconds = 4000;
+            MotionZoneDimSteps = 5;
         }
 
         SchemaVersion = CurrentSchemaVersion;
@@ -319,6 +333,14 @@ public sealed class AppSettings
             MotionZoneRecurringHoldMilliseconds,
             200,
             120000);
+        MotionZoneDimDurationMilliseconds = Math.Clamp(
+            MotionZoneDimDurationMilliseconds,
+            0,
+            30000);
+        MotionZoneDimSteps = Math.Clamp(
+            MotionZoneDimSteps,
+            2,
+            12);
         MotionZoneRevealFadeMilliseconds = Math.Clamp(
             MotionZoneRevealFadeMilliseconds,
             10,

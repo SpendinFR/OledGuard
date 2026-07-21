@@ -32,7 +32,7 @@ internal sealed class TrayService : IDisposable
         reveal.Click += (_, _) => _controller.RevealAll(TimeSpan.FromSeconds(10));
         menu.Items.Add(reveal);
 
-        var delayMenu = new Forms.ToolStripMenuItem("Délai avant assombrissement");
+        var delayMenu = new Forms.ToolStripMenuItem("Maintien d'une zone active");
         foreach (var seconds in new[] { 5, 15, 30, 60, 120, 300, 600 })
         {
             var label = seconds >= 60 && seconds % 60 == 0 ? $"{seconds / 60} minute(s)" : $"{seconds} secondes";
@@ -92,12 +92,16 @@ internal sealed class TrayService : IDisposable
         _enabledItem.Checked = _controller.Enabled;
         foreach (var pair in _delayItems)
         {
-            pair.Value.Checked = pair.Key == _controller.Settings.StaticDelaySeconds;
+            pair.Value.Checked =
+                pair.Key ==
+                _controller.Settings
+                    .MotionZoneRecurringHoldMilliseconds /
+                1000;
         }
 
         _notifyIcon.Icon = _controller.Enabled ? _activeIcon : _inactiveIcon;
         _notifyIcon.Text = _controller.Enabled
-            ? $"OledGuard actif — assombrissement après {_controller.Settings.StaticDelaySeconds} s"
+            ? $"OledGuard actif — maintien actif {_controller.Settings.MotionZoneRecurringHoldMilliseconds / 1000} s"
             : "OledGuard désactivé";
     }
 

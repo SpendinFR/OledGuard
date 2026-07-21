@@ -20,6 +20,13 @@ internal sealed class MonitorSession : IDisposable
             (MaximumColumn - MinimumColumn + 1);
     }
 
+    private readonly record struct VisibleRegion(
+        int MinimumRow,
+        int MaximumRow,
+        int MinimumColumn,
+        int MaximumColumn,
+        float MaskOpacity);
+
     private sealed class TrackedRegion
     {
         public int MinimumRow;
@@ -31,6 +38,7 @@ internal sealed class MonitorSession : IDisposable
         public long LastHitCaptureTicks;
         public int MotionHits;
         public bool Recurring;
+        public int CurrentDimStep;
 
         public long GeometryWindowStartTicks;
         public bool HasRecentBounds;
@@ -63,7 +71,7 @@ internal sealed class MonitorSession : IDisposable
 
     private readonly List<DetectedRegion> _detectedRegions = new();
     private readonly List<TrackedRegion> _trackedRegions = new();
-    private readonly List<DetectedRegion> _visibleRectangles = new();
+    private readonly List<VisibleRegion> _visibleRectangles = new();
 
     private readonly object _sync = new();
     private readonly DispatcherTimer _renderTimer;
@@ -1111,6 +1119,7 @@ internal sealed class MonitorSession : IDisposable
     {
         region.LastMotionTicks = now;
         region.LastHitCaptureTicks = now;
+        region.CurrentDimStep = 0;
 
         if (region.WindowStartTicks == 0 ||
             now - region.WindowStartTicks >
@@ -1129,7 +1138,8 @@ internal sealed class MonitorSession : IDisposable
         region.Recurring = true;
     }
 
-    private bool RemoveExpiredRegions(long now)
+    private bool UpdateRegionVisualStates(
+        long now)
     {
         var changed = false;
         var oneShotTicks =
@@ -1138,6 +1148,12 @@ internal sealed class MonitorSession : IDisposable
         var recurringTicks =
             ToStopwatchTicks(
                 _settings.MotionZoneRecurringHoldMilliseconds);
+        var dimDurationTicks =
+            ToStopwatchTicks(
+                _settings.MotionZoneDimDurationMilliseconds);
+        var dimSteps = Math.Max(
+            2,
+            _settings.MotionZoneDimSteps);
 
         for (var index =
                  _trackedRegions.Count - 1;
@@ -1150,14 +1166,53 @@ internal sealed class MonitorSession : IDisposable
                 region.Recurring
                     ? recurringTicks
                     : oneShotTicks;
+            var elapsed =
+                now -
+                region.LastMotionTicks;
 
-            if (now - region.LastMotionTicks <
-                holdTicks)
+            if (elapsed < holdTicks)
+            {
+                if (region.CurrentDimStep != 0)
+                {
+                    region.CurrentDimStep = 0;
+                    changed = true;
+                }
+
+                continue;
+            }
+
+            if (dimDurationTicks <= 0 ||
+                elapsed >=
+                    holdTicks +
+                    dimDurationTicks)
+            {
+                _trackedRegions.RemoveAt(index);
+                changed = true;
+                continue;
+            }
+
+            var dimElapsed =
+                elapsed -
+                holdTicks;
+            var targetStep = Math.Clamp(
+                1 +
+                (int)(
+                    dimElapsed *
+                    dimSteps /
+                    Math.Max(
+                        1L,
+                        dimDurationTicks)),
+                1,
+                dimSteps);
+
+            if (region.CurrentDimStep ==
+                targetStep)
             {
                 continue;
             }
 
-            _trackedRegions.RemoveAt(index);
+            region.CurrentDimStep =
+                targetStep;
             changed = true;
         }
 
@@ -1183,8 +1238,8 @@ internal sealed class MonitorSession : IDisposable
             var cursorChanged =
                 cursor.X != _lastCursorX ||
                 cursor.Y != _lastCursorY;
-            var regionExpired =
-                RemoveExpiredRegions(now);
+            var regionVisualChanged =
+                UpdateRegionVisualStates(now);
             var revealAllExpired =
                 _revealAllUntilTicks != 0 &&
                 now >= _revealAllUntilTicks;
@@ -1197,7 +1252,7 @@ internal sealed class MonitorSession : IDisposable
             shouldPush =
                 _maskDirty ||
                 cursorChanged ||
-                regionExpired ||
+                regionVisualChanged ||
                 revealAllExpired;
 
             _lastCursorX = cursor.X;
@@ -1473,16 +1528,18 @@ internal sealed class MonitorSession : IDisposable
                     _renderAlpha,
                     maximumOpacity);
 
-                BuildVisibleRectangles();
+                BuildVisibleRectangles(
+                    maximumOpacity);
 
                 foreach (var rectangle in
                          _visibleRectangles)
                 {
-                    SetRectangleClear(
+                    SetRectangleOpacity(
                         rectangle.MinimumRow,
                         rectangle.MaximumRow,
                         rectangle.MinimumColumn,
-                        rectangle.MaximumColumn);
+                        rectangle.MaximumColumn,
+                        rectangle.MaskOpacity);
                 }
 
                 ApplyCurrentMouseBlockReveal();
@@ -1551,7 +1608,8 @@ internal sealed class MonitorSession : IDisposable
             centerColumn + halfColumns);
     }
 
-    private void BuildVisibleRectangles()
+    private void BuildVisibleRectangles(
+        float maximumOpacity)
     {
         _visibleRectangles.Clear();
 
@@ -1561,6 +1619,9 @@ internal sealed class MonitorSession : IDisposable
         var thinMinimumArea = Math.Max(
             minimumArea,
             _settings.MotionZoneThinRegionMinimumAreaCells);
+        var dimSteps = Math.Max(
+            2,
+            _settings.MotionZoneDimSteps);
 
         foreach (var region in
                  _trackedRegions)
@@ -1574,7 +1635,8 @@ internal sealed class MonitorSession : IDisposable
                 region.MinimumRow +
                 1;
             var area =
-                width * height;
+                width *
+                height;
 
             if (area < minimumArea)
             {
@@ -1588,13 +1650,28 @@ internal sealed class MonitorSession : IDisposable
                 continue;
             }
 
+            var maskOpacity =
+                maximumOpacity *
+                Math.Clamp(
+                    region.CurrentDimStep,
+                    0,
+                    dimSteps) /
+                dimSteps;
+
+            if (maskOpacity >=
+                maximumOpacity -
+                0.0001f)
+            {
+                continue;
+            }
+
             _visibleRectangles.Add(
-                new DetectedRegion(
+                new VisibleRegion(
                     region.MinimumRow,
                     region.MaximumRow,
                     region.MinimumColumn,
                     region.MaximumColumn,
-                    0));
+                    maskOpacity));
         }
 
         var gap =
@@ -1621,7 +1698,11 @@ internal sealed class MonitorSession : IDisposable
                     var second =
                         _visibleRectangles[secondIndex];
 
-                    if (!ShouldMergeVisibleRectangles(
+                    if (Math.Abs(
+                            first.MaskOpacity -
+                            second.MaskOpacity) >
+                        0.0001f ||
+                        !ShouldMergeVisibleRectangles(
                             first,
                             second,
                             gap))
@@ -1630,7 +1711,9 @@ internal sealed class MonitorSession : IDisposable
                     }
 
                     _visibleRectangles[firstIndex] =
-                        Union(first, second);
+                        UnionVisible(
+                            first,
+                            second);
                     _visibleRectangles.RemoveAt(
                         secondIndex);
                     merged = true;
@@ -1646,8 +1729,8 @@ internal sealed class MonitorSession : IDisposable
     }
 
     private static bool ShouldMergeVisibleRectangles(
-        DetectedRegion first,
-        DetectedRegion second,
+        VisibleRegion first,
+        VisibleRegion second,
         int maximumGap)
     {
         var rowOverlap = Math.Max(
@@ -1657,7 +1740,8 @@ internal sealed class MonitorSession : IDisposable
                 second.MaximumRow) -
             Math.Max(
                 first.MinimumRow,
-                second.MinimumRow) + 1);
+                second.MinimumRow) +
+            1);
         var columnOverlap = Math.Max(
             0,
             Math.Min(
@@ -1665,7 +1749,8 @@ internal sealed class MonitorSession : IDisposable
                 second.MaximumColumn) -
             Math.Max(
                 first.MinimumColumn,
-                second.MinimumColumn) + 1);
+                second.MinimumColumn) +
+            1);
         var rowGap = AxisGap(
             first.MinimumRow,
             first.MaximumRow,
@@ -1693,11 +1778,42 @@ internal sealed class MonitorSession : IDisposable
                columnGap <= 1;
     }
 
+    private static VisibleRegion UnionVisible(
+        VisibleRegion first,
+        VisibleRegion second) =>
+        new(
+            Math.Min(
+                first.MinimumRow,
+                second.MinimumRow),
+            Math.Max(
+                first.MaximumRow,
+                second.MaximumRow),
+            Math.Min(
+                first.MinimumColumn,
+                second.MinimumColumn),
+            Math.Max(
+                first.MaximumColumn,
+                second.MaximumColumn),
+            first.MaskOpacity);
+
     private void SetRectangleClear(
         int minimumRow,
         int maximumRow,
         int minimumColumn,
-        int maximumColumn)
+        int maximumColumn) =>
+        SetRectangleOpacity(
+            minimumRow,
+            maximumRow,
+            minimumColumn,
+            maximumColumn,
+            0f);
+
+    private void SetRectangleOpacity(
+        int minimumRow,
+        int maximumRow,
+        int minimumColumn,
+        int maximumColumn,
+        float maskOpacity)
     {
         minimumRow = Math.Clamp(
             minimumRow,
@@ -1715,6 +1831,10 @@ internal sealed class MonitorSession : IDisposable
             maximumColumn,
             0,
             _columns - 1);
+        maskOpacity = Math.Clamp(
+            maskOpacity,
+            0f,
+            (float)_settings.MaximumMaskOpacity);
 
         for (var row = minimumRow;
              row <= maximumRow;
@@ -1724,9 +1844,15 @@ internal sealed class MonitorSession : IDisposable
                  column <= maximumColumn;
                  column++)
             {
-                _renderAlpha[
-                    row * _columns +
-                    column] = 0f;
+                var index =
+                    row *
+                    _columns +
+                    column;
+
+                _renderAlpha[index] =
+                    Math.Min(
+                        _renderAlpha[index],
+                        maskOpacity);
             }
         }
     }
