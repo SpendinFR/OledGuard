@@ -5,7 +5,7 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 39;
+    public const int CurrentSchemaVersion = 40;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
@@ -48,13 +48,13 @@ public sealed class AppSettings
 
     // Official focus engine: the screen is uniformly dark except for clean,
     // binary active rectangles and the temporary mouse trail.
-    public int MotionZoneCaptureWidth { get; set; } = 1280;
-    public int MotionZoneSamplesPerCell { get; set; } = 4;
+    public int MotionZoneCaptureWidth { get; set; } = 1920;
+    public int MotionZoneSamplesPerCell { get; set; } = 1;
     public int MotionZoneSamplingMilliseconds { get; set; } = 33;
-    public int MotionZonePixelThreshold { get; set; } = 12;
+    public int MotionZonePixelThreshold { get; set; } = 8;
     public double MotionZoneChangedFraction { get; set; } = 0.08;
-    public int MotionZoneMergeRadiusCells { get; set; } = 1;
-    public int MotionZonePaddingCells { get; set; } = 1;
+    public int MotionZoneMergeRadiusCells { get; set; } = 0;
+    public int MotionZonePaddingCells { get; set; } = 0;
     public int MotionZoneMinimumMotionCells { get; set; } = 3;
     public int MotionZoneMinimumVisibleAreaCells { get; set; } = 6;
     public int MotionZoneThinRegionMinimumAreaCells { get; set; } = 12;
@@ -68,8 +68,6 @@ public sealed class AppSettings
     public int MotionZoneRecurringMinimumSpanMilliseconds { get; set; } = 180;
     public int MotionZoneRecurringHits { get; set; } = 3;
     public int MotionZoneRecurringHoldMilliseconds { get; set; } = 30000;
-    public int MotionZoneDimDurationMilliseconds { get; set; } = 4000;
-    public int MotionZoneDimSteps { get; set; } = 5;
     public int MotionZoneRevealFadeMilliseconds { get; set; } = 20;
     public int MotionZoneReturnFadeMilliseconds { get; set; } = 50;
     public int MotionZoneTrackingGapCells { get; set; } = 8;
@@ -194,10 +192,13 @@ public sealed class AppSettings
             MouseHoverRadiusPixels = 18;
         }
 
-        if (SchemaVersion < 39)
+        if (SchemaVersion < 40)
         {
-            MotionZoneDimDurationMilliseconds = 4000;
-            MotionZoneDimSteps = 5;
+            MotionZoneCaptureWidth = 1920;
+            MotionZoneSamplesPerCell = 1;
+            MotionZonePixelThreshold = 8;
+            MotionZoneMergeRadiusCells = 0;
+            MotionZonePaddingCells = 0;
         }
 
         SchemaVersion = CurrentSchemaVersion;
@@ -219,10 +220,13 @@ public sealed class AppSettings
             MouseHoverRadiusPixels = 18;
         }
 
-        if (SchemaVersion < 39)
+        if (SchemaVersion < 40)
         {
-            MotionZoneDimDurationMilliseconds = 4000;
-            MotionZoneDimSteps = 5;
+            MotionZoneCaptureWidth = 1920;
+            MotionZoneSamplesPerCell = 1;
+            MotionZonePixelThreshold = 8;
+            MotionZoneMergeRadiusCells = 0;
+            MotionZonePaddingCells = 0;
         }
 
         SchemaVersion = CurrentSchemaVersion;
@@ -256,10 +260,10 @@ public sealed class AppSettings
         MotionZoneCaptureWidth = Math.Clamp(
             MotionZoneCaptureWidth,
             640,
-            1920);
+            3840);
         MotionZoneSamplesPerCell = Math.Clamp(
             MotionZoneSamplesPerCell,
-            2,
+            1,
             8);
         MotionZoneSamplingMilliseconds = Math.Clamp(
             MotionZoneSamplingMilliseconds,
@@ -333,14 +337,6 @@ public sealed class AppSettings
             MotionZoneRecurringHoldMilliseconds,
             200,
             120000);
-        MotionZoneDimDurationMilliseconds = Math.Clamp(
-            MotionZoneDimDurationMilliseconds,
-            0,
-            30000);
-        MotionZoneDimSteps = Math.Clamp(
-            MotionZoneDimSteps,
-            2,
-            12);
         MotionZoneRevealFadeMilliseconds = Math.Clamp(
             MotionZoneRevealFadeMilliseconds,
             10,
