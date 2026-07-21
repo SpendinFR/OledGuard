@@ -921,6 +921,24 @@ internal sealed class MonitorSession : IDisposable
                     (double)Math.Max(
                         trackedArea,
                         detectedArea);
+
+                if (tracked.CurrentDimStep > 0)
+                {
+                    var trackedCoverage =
+                        intersection /
+                        (double)trackedArea;
+
+                    // Once the old large region has started dimming, a small
+                    // logo, icon or cross inside it becomes a new independent
+                    // region. Only substantial activity may wake the complete
+                    // old rectangle again.
+                    if (trackedCoverage < 0.35 &&
+                        sizeRatio < 0.45)
+                    {
+                        continue;
+                    }
+                }
+
                 var distance =
                     AxisGap(
                         trackedMinimumRow,
