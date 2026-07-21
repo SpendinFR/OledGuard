@@ -5,7 +5,7 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 33;
+    public const int CurrentSchemaVersion = 34;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
@@ -50,17 +50,24 @@ public sealed class AppSettings
     // than individual pixels or edges.
     public int MotionZoneCaptureWidth { get; set; } = 1280;
     public int MotionZoneSamplesPerCell { get; set; } = 4;
-    public int MotionZoneSamplingMilliseconds { get; set; } = 60;
+    public int MotionZoneSamplingMilliseconds { get; set; } = 40;
     public int MotionZonePixelThreshold { get; set; } = 12;
     public double MotionZoneChangedFraction { get; set; } = 0.08;
     public int MotionZoneMergeRadiusCells { get; set; } = 1;
     public int MotionZonePaddingCells { get; set; } = 1;
-    public int MotionZoneOneShotHoldMilliseconds { get; set; } = 260;
-    public int MotionZoneRecurringWindowMilliseconds { get; set; } = 1800;
+    public int MotionZoneOneShotHoldMilliseconds { get; set; } = 1200;
+    public int MotionZoneRecurringWindowMilliseconds { get; set; } = 2400;
+    public int MotionZoneRecurringMinimumSpanMilliseconds { get; set; } = 180;
     public int MotionZoneRecurringHits { get; set; } = 3;
-    public int MotionZoneRecurringHoldMilliseconds { get; set; } = 1100;
-    public int MotionZoneRevealFadeMilliseconds { get; set; } = 70;
-    public int MotionZoneReturnFadeMilliseconds { get; set; } = 280;
+    public int MotionZoneRecurringHoldMilliseconds { get; set; } = 2500;
+    public int MotionZoneRevealFadeMilliseconds { get; set; } = 20;
+    public int MotionZoneReturnFadeMilliseconds { get; set; } = 500;
+    public int MotionZoneTrackingGapCells { get; set; } = 8;
+    public int MotionZoneSnakeMinimumDistanceCells { get; set; } = 12;
+    public int MotionZoneSnakeDurationMilliseconds { get; set; } = 520;
+    public int MotionZoneSnakeTailCells { get; set; } = 18;
+    public int MotionZoneSnakeThicknessCells { get; set; } = 1;
+    public double MotionZoneSnakeRevealStrength { get; set; } = 0.72;
 
     // Mouse engine copied from build 3 (v0.5.0 / e1ddf1ed).
     public int MouseRevealRadiusPixels { get; set; } = 40;
@@ -137,6 +144,24 @@ public sealed class AppSettings
             MotionZoneReturnFadeMilliseconds = 280;
         }
 
+        if (SchemaVersion < 34)
+        {
+            MotionZoneSamplingMilliseconds = 40;
+            MotionZoneOneShotHoldMilliseconds = 1200;
+            MotionZoneRecurringWindowMilliseconds = 2400;
+            MotionZoneRecurringMinimumSpanMilliseconds = 180;
+            MotionZoneRecurringHits = 3;
+            MotionZoneRecurringHoldMilliseconds = 2500;
+            MotionZoneRevealFadeMilliseconds = 20;
+            MotionZoneReturnFadeMilliseconds = 500;
+            MotionZoneTrackingGapCells = 8;
+            MotionZoneSnakeMinimumDistanceCells = 12;
+            MotionZoneSnakeDurationMilliseconds = 520;
+            MotionZoneSnakeTailCells = 18;
+            MotionZoneSnakeThicknessCells = 1;
+            MotionZoneSnakeRevealStrength = 0.72;
+        }
+
         SchemaVersion = CurrentSchemaVersion;
     }
 
@@ -206,6 +231,10 @@ public sealed class AppSettings
             MotionZoneRecurringWindowMilliseconds,
             300,
             5000);
+        MotionZoneRecurringMinimumSpanMilliseconds = Math.Clamp(
+            MotionZoneRecurringMinimumSpanMilliseconds,
+            80,
+            2000);
         MotionZoneRecurringHits = Math.Clamp(
             MotionZoneRecurringHits,
             2,
@@ -213,15 +242,39 @@ public sealed class AppSettings
         MotionZoneRecurringHoldMilliseconds = Math.Clamp(
             MotionZoneRecurringHoldMilliseconds,
             200,
-            5000);
+            8000);
         MotionZoneRevealFadeMilliseconds = Math.Clamp(
             MotionZoneRevealFadeMilliseconds,
-            20,
+            10,
             1000);
         MotionZoneReturnFadeMilliseconds = Math.Clamp(
             MotionZoneReturnFadeMilliseconds,
             50,
             3000);
+        MotionZoneTrackingGapCells = Math.Clamp(
+            MotionZoneTrackingGapCells,
+            0,
+            20);
+        MotionZoneSnakeMinimumDistanceCells = Math.Clamp(
+            MotionZoneSnakeMinimumDistanceCells,
+            2,
+            80);
+        MotionZoneSnakeDurationMilliseconds = Math.Clamp(
+            MotionZoneSnakeDurationMilliseconds,
+            120,
+            3000);
+        MotionZoneSnakeTailCells = Math.Clamp(
+            MotionZoneSnakeTailCells,
+            3,
+            100);
+        MotionZoneSnakeThicknessCells = Math.Clamp(
+            MotionZoneSnakeThicknessCells,
+            0,
+            4);
+        MotionZoneSnakeRevealStrength = Math.Clamp(
+            MotionZoneSnakeRevealStrength,
+            0.1,
+            1.0);
 
         MouseRevealRadiusPixels = Math.Clamp(MouseRevealRadiusPixels, 0, 200);
         MouseFeatherRadiusPixels = Math.Clamp(MouseFeatherRadiusPixels, 1, 240);
