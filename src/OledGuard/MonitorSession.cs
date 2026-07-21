@@ -1080,14 +1080,21 @@ internal sealed class MonitorSession : IDisposable
 
             if (region.HasRecentBounds)
             {
-                region.MinimumRow =
-                    region.RecentMinimumRow;
-                region.MaximumRow =
-                    region.RecentMaximumRow;
-                region.MinimumColumn =
-                    region.RecentMinimumColumn;
-                region.MaximumColumn =
-                    region.RecentMaximumColumn;
+                // Keep the complete active rectangle while any movement
+                // continues inside it. Recent motion may enlarge the region,
+                // but it can never replace it with a smaller fragment.
+                region.MinimumRow = Math.Min(
+                    region.MinimumRow,
+                    region.RecentMinimumRow);
+                region.MaximumRow = Math.Max(
+                    region.MaximumRow,
+                    region.RecentMaximumRow);
+                region.MinimumColumn = Math.Min(
+                    region.MinimumColumn,
+                    region.RecentMinimumColumn);
+                region.MaximumColumn = Math.Max(
+                    region.MaximumColumn,
+                    region.RecentMaximumColumn);
             }
 
             region.HasRecentBounds = false;
