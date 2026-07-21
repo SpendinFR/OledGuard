@@ -9,6 +9,7 @@ internal static class NativeMethods
     public const long WsExToolWindow = 0x00000080L;
     public const long WsExNoActivate = 0x08000000L;
     public const uint WdaExcludeFromCapture = 0x00000011;
+    public const uint DwmaExtendedFrameBounds = 9;
     public const uint SwpNoActivate = 0x0010;
     public const uint SwpShowWindow = 0x0040;
     public static readonly IntPtr HwndTopmost = new(-1);
@@ -32,6 +33,15 @@ internal static class NativeMethods
     {
         public int X;
         public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Rect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -64,6 +74,20 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetCursorPos(out Point point);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetWindowRect(IntPtr hWnd, out Rect rect);
+
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmGetWindowAttribute(
+        IntPtr hWnd,
+        uint attribute,
+        out Rect value,
+        int valueSize);
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);

@@ -34,6 +34,8 @@ internal sealed class MonitorSession : IDisposable
     private readonly bool[] _hasDimReference;
     private readonly byte[] _dimReferenceChangeStreak;
     private readonly bool[] _wasEverDimmed;
+    private readonly bool[] _foregroundWindowMask;
+    private readonly bool[] _foregroundTransitionMask;
     private readonly bool[] _rawStatic;
     private readonly bool[] _changedNow;
     private readonly bool[] _maskA;
@@ -63,6 +65,13 @@ internal sealed class MonitorSession : IDisposable
     private long _longReferenceTicks;
     private long _revealAllUntilTicks;
     private long _lastAnimationTicks;
+
+    private IntPtr _foregroundWindowHandle;
+    private System.Drawing.Rectangle _foregroundWindowBounds =
+        System.Drawing.Rectangle.Empty;
+    private bool _foregroundStateInitialized;
+    private int _foregroundTransitionCapturesRemaining;
+    private long _foregroundWindowLastMotionTicks;
 
     private int _lastCursorX = int.MinValue;
     private int _lastCursorY = int.MinValue;
@@ -109,6 +118,8 @@ internal sealed class MonitorSession : IDisposable
         _hasDimReference = new bool[cellCount];
         _dimReferenceChangeStreak = new byte[cellCount];
         _wasEverDimmed = new bool[cellCount];
+        _foregroundWindowMask = new bool[cellCount];
+        _foregroundTransitionMask = new bool[cellCount];
         _rawStatic = new bool[cellCount];
         _changedNow = new bool[cellCount];
         _maskA = new bool[cellCount];
@@ -163,6 +174,8 @@ internal sealed class MonitorSession : IDisposable
             Array.Clear(_hasDimReference, 0, _hasDimReference.Length);
             Array.Clear(_dimReferenceChangeStreak, 0, _dimReferenceChangeStreak.Length);
             Array.Clear(_wasEverDimmed, 0, _wasEverDimmed.Length);
+            Array.Clear(_foregroundWindowMask, 0, _foregroundWindowMask.Length);
+            Array.Clear(_foregroundTransitionMask, 0, _foregroundTransitionMask.Length);
             Array.Clear(_rawStatic, 0, _rawStatic.Length);
             Array.Clear(_changedNow, 0, _changedNow.Length);
             Array.Clear(_maskA, 0, _maskA.Length);
@@ -173,6 +186,12 @@ internal sealed class MonitorSession : IDisposable
             Array.Clear(_mouseActiveCells, 0, _mouseActiveCells.Length);
             Array.Clear(_mouseDistance, 0, _mouseDistance.Length);
             Array.Clear(_mouseRevealStrength, 0, _mouseRevealStrength.Length);
+
+            _foregroundWindowHandle = IntPtr.Zero;
+            _foregroundWindowBounds = System.Drawing.Rectangle.Empty;
+            _foregroundStateInitialized = false;
+            _foregroundTransitionCapturesRemaining = 0;
+            _foregroundWindowLastMotionTicks = 0;
 
             _lastCursorX = int.MinValue;
             _lastCursorY = int.MinValue;
@@ -249,6 +268,8 @@ internal sealed class MonitorSession : IDisposable
             {
                 return;
             }
+
+            UpdateForegroundWindowState(now);
 
             if (!_hasReferences)
             {
@@ -333,8 +354,15 @@ internal sealed class MonitorSession : IDisposable
                 }
             }
 
+            UpdateForegroundMotionState(now);
             BuildCleanDimMask(now);
             UpdateDimReferences(current);
+
+            if (_foregroundTransitionCapturesRemaining > 0)
+            {
+                _foregroundTransitionCapturesRemaining--;
+            }
+
             Buffer.BlockCopy(current, 0, _previous, 0, current.Length);
 
             if (now - _shortReferenceTicks >= ToStopwatchTicks(_settings.ShortReferenceSeconds * 1000.0))
@@ -403,6 +431,7 @@ internal sealed class MonitorSession : IDisposable
     {
         Array.Copy(_finalDimMask, _previousDimMask, _finalDimMask.Length);
 
+        // Normal build 10 candidates are cleaned exactly as before.
         Array.Copy(_rawStatic, _maskA, _rawStatic.Length);
         var source = _maskA;
         var destination = _maskB;
@@ -420,68 +449,386 @@ internal sealed class MonitorSession : IDisposable
 
         var fastReapplyTicks = ToStopwatchTicks(
             _settings.PreviouslyDimmedReapplySeconds * 1000.0);
+        var foregroundRecentlyActive =
+            IsForegroundWindowRecentlyActive(now, fastReapplyTicks);
 
-        for (var index = 0; index < _finalDimMask.Length; index++)
+        // Fast return is built as a separate exact historical mask. It is never
+        // allowed in a moving foreground window or near recent local activity.
+        Array.Clear(_maskA, 0, _maskA.Length);
+
+        for (var index = 0; index < _maskA.Length; index++)
         {
-            if (_previousDimMask[index])
+            if (_previousDimMask[index] ||
+                !_wasEverDimmed[index] ||
+                (foregroundRecentlyActive && _foregroundWindowMask[index]) ||
+                HasRecentActivityNearby(index, now, fastReapplyTicks))
             {
-                var protectedImageChanged =
-                    _hasDimReference[index] &&
-                    _dimReferenceChangeStreak[index] >= 2;
-
-                if (!protectedImageChanged)
-                {
-                    _finalDimMask[index] = true;
-                }
-
                 continue;
             }
 
-            var cell = _cells[index];
-            if (_wasEverDimmed[index] &&
-                !_changedNow[index] &&
-                now - cell.LastMotionTicks >= fastReapplyTicks)
+            _maskA[index] = true;
+        }
+
+        RemoveSmallDimIslands(_maskA);
+        SuppressDarkRegions(_maskA);
+
+        for (var index = 0; index < _finalDimMask.Length; index++)
+        {
+            if (_maskA[index])
             {
                 _finalDimMask[index] = true;
             }
         }
 
-        // Clean the union again so isolated leftovers cannot become spots.
-        Array.Copy(_finalDimMask, _maskA, _finalDimMask.Length);
-        source = _maskA;
-        destination = _maskB;
-
-        for (var pass = 0; pass < _settings.MajorityFilterPasses; pass++)
-        {
-            ApplyBidirectionalMajority(source, destination);
-            (source, destination) = (destination, source);
-        }
-
-        Array.Copy(source, _finalDimMask, source.Length);
-        RemoveSmallDimIslands(_finalDimMask);
-        FillSmallBrightHoles(_finalDimMask);
-        SuppressDarkRegions(_finalDimMask);
-
+        // Preserve the old mask cell by cell. During a foreground-window
+        // transition, differences outside the actual changed window rectangle
+        // are ignored and rebased instead of propagating across the screen.
         for (var index = 0; index < _finalDimMask.Length; index++)
         {
-            if (_previousDimMask[index])
+            if (!_previousDimMask[index])
             {
-                if (_hasDimReference[index] &&
-                    _dimReferenceChangeStreak[index] >= 2)
-                {
-                    _finalDimMask[index] = false;
-                }
+                continue;
             }
-            else if (_changedNow[index])
+
+            if (_foregroundTransitionCapturesRemaining > 0 &&
+                !_foregroundTransitionMask[index])
             {
-                _finalDimMask[index] = false;
+                _finalDimMask[index] = true;
+                _dimReferenceChangeStreak[index] = 0;
+                continue;
+            }
+
+            var protectedImageChanged =
+                _hasDimReference[index] &&
+                _dimReferenceChangeStreak[index] >= 2;
+
+            _finalDimMask[index] = !protectedImageChanged;
+        }
+
+        // Deliberately no majority, hole filling, island removal or luminance
+        // suppression here. Those operations are valid for new candidates, but
+        // applying them after retention lets one opened window erode or spread
+        // an already stable old region.
+    }
+
+    private bool HasRecentActivityNearby(
+        int index,
+        long now,
+        long quietTicks)
+    {
+        var centerRow = index / _columns;
+        var centerColumn = index % _columns;
+        const int radius = 2;
+
+        for (var row = Math.Max(0, centerRow - radius);
+             row <= Math.Min(_rows - 1, centerRow + radius);
+             row++)
+        {
+            for (var column = Math.Max(0, centerColumn - radius);
+                 column <= Math.Min(_columns - 1, centerColumn + radius);
+                 column++)
+            {
+                var neighbour = row * _columns + column;
+                if (_changedNow[neighbour] ||
+                    now - _cells[neighbour].LastMotionTicks < quietTicks)
+                {
+                    return true;
+                }
             }
         }
 
-        RemoveSmallDimIslands(_finalDimMask);
-        SuppressDarkRegions(_finalDimMask);
+        return false;
     }
 
+    private void UpdateForegroundMotionState(long now)
+    {
+        for (var index = 0; index < _changedNow.Length; index++)
+        {
+            if (_foregroundWindowMask[index] && _changedNow[index])
+            {
+                _foregroundWindowLastMotionTicks = now;
+                return;
+            }
+        }
+    }
+
+    private bool IsForegroundWindowRecentlyActive(
+        long now,
+        long quietTicks)
+    {
+        if (_foregroundWindowHandle == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        return _foregroundTransitionCapturesRemaining > 0 ||
+               (_foregroundWindowLastMotionTicks > 0 &&
+                now - _foregroundWindowLastMotionTicks < quietTicks);
+    }
+
+    private void UpdateForegroundWindowState(long now)
+    {
+        var hasForeground = TryGetForegroundWindowBounds(
+            out var newHandle,
+            out var newBounds);
+
+        Array.Clear(
+            _foregroundWindowMask,
+            0,
+            _foregroundWindowMask.Length);
+
+        if (hasForeground)
+        {
+            MarkRectangleOnMask(
+                newBounds,
+                _foregroundWindowMask,
+                marginCells: 0);
+        }
+
+        if (!_foregroundStateInitialized)
+        {
+            _foregroundStateInitialized = true;
+            _foregroundWindowHandle = newHandle;
+            _foregroundWindowBounds = newBounds;
+            _foregroundWindowLastMotionTicks = now;
+            return;
+        }
+
+        var changed =
+            newHandle != _foregroundWindowHandle ||
+            RectangleChanged(_foregroundWindowBounds, newBounds);
+
+        if (changed)
+        {
+            BuildForegroundTransitionMask(
+                _foregroundWindowHandle,
+                _foregroundWindowBounds,
+                newHandle,
+                newBounds);
+
+            var captureInterval = Math.Max(
+                100,
+                _settings.MaskedSamplingMilliseconds);
+            _foregroundTransitionCapturesRemaining = Math.Max(
+                4,
+                (int)Math.Ceiling(3000.0 / captureInterval));
+            _foregroundWindowLastMotionTicks = now;
+        }
+        else if (_foregroundTransitionCapturesRemaining <= 0)
+        {
+            Array.Clear(
+                _foregroundTransitionMask,
+                0,
+                _foregroundTransitionMask.Length);
+        }
+
+        _foregroundWindowHandle = newHandle;
+        _foregroundWindowBounds = newBounds;
+    }
+
+    private void BuildForegroundTransitionMask(
+        IntPtr oldHandle,
+        System.Drawing.Rectangle oldBounds,
+        IntPtr newHandle,
+        System.Drawing.Rectangle newBounds)
+    {
+        Array.Clear(
+            _foregroundTransitionMask,
+            0,
+            _foregroundTransitionMask.Length);
+
+        if (oldBounds.IsEmpty)
+        {
+            MarkRectangleOnMask(
+                newBounds,
+                _foregroundTransitionMask,
+                marginCells: 0);
+            return;
+        }
+
+        if (newBounds.IsEmpty)
+        {
+            MarkRectangleOnMask(
+                oldBounds,
+                _foregroundTransitionMask,
+                marginCells: 0);
+            return;
+        }
+
+        // Opening or closing a smaller child-like window changes the smaller
+        // rectangle, not the whole large background window behind it.
+        if (oldHandle != newHandle &&
+            ContainsWithTolerance(oldBounds, newBounds, 12))
+        {
+            MarkRectangleOnMask(
+                newBounds,
+                _foregroundTransitionMask,
+                marginCells: 0);
+            return;
+        }
+
+        if (oldHandle != newHandle &&
+            ContainsWithTolerance(newBounds, oldBounds, 12))
+        {
+            MarkRectangleOnMask(
+                oldBounds,
+                _foregroundTransitionMask,
+                marginCells: 0);
+            return;
+        }
+
+        // Real window switches, moves and resizes may affect both old and new
+        // positions, so only their union is allowed to refresh.
+        MarkRectangleOnMask(
+            oldBounds,
+            _foregroundTransitionMask,
+            marginCells: 0);
+        MarkRectangleOnMask(
+            newBounds,
+            _foregroundTransitionMask,
+            marginCells: 0);
+    }
+
+    private bool TryGetForegroundWindowBounds(
+        out IntPtr window,
+        out System.Drawing.Rectangle bounds)
+    {
+        window = NativeMethods.GetForegroundWindow();
+        bounds = System.Drawing.Rectangle.Empty;
+
+        if (window == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        NativeMethods.Rect nativeRect;
+        var found = false;
+
+        try
+        {
+            found = NativeMethods.DwmGetWindowAttribute(
+                window,
+                NativeMethods.DwmaExtendedFrameBounds,
+                out nativeRect,
+                System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.Rect>()) == 0;
+        }
+        catch
+        {
+            nativeRect = default;
+        }
+
+        if (!found)
+        {
+            found = NativeMethods.GetWindowRect(window, out nativeRect);
+        }
+
+        if (!found ||
+            nativeRect.Right <= nativeRect.Left ||
+            nativeRect.Bottom <= nativeRect.Top)
+        {
+            return false;
+        }
+
+        var raw = System.Drawing.Rectangle.FromLTRB(
+            nativeRect.Left,
+            nativeRect.Top,
+            nativeRect.Right,
+            nativeRect.Bottom);
+        bounds = System.Drawing.Rectangle.Intersect(
+            raw,
+            _screen.Bounds);
+
+        return bounds.Width > 0 && bounds.Height > 0;
+    }
+
+    private void MarkRectangleOnMask(
+        System.Drawing.Rectangle rectangle,
+        bool[] mask,
+        int marginCells)
+    {
+        if (rectangle.IsEmpty)
+        {
+            return;
+        }
+
+        var screen = _screen.Bounds;
+        var clipped = System.Drawing.Rectangle.Intersect(
+            rectangle,
+            screen);
+
+        if (clipped.Width <= 0 || clipped.Height <= 0)
+        {
+            return;
+        }
+
+        var firstColumn = Math.Clamp(
+            (clipped.Left - screen.Left) * _columns /
+                Math.Max(1, screen.Width) - marginCells,
+            0,
+            _columns - 1);
+        var lastColumn = Math.Clamp(
+            (int)Math.Ceiling(
+                (clipped.Right - screen.Left) *
+                _columns /
+                (double)Math.Max(1, screen.Width)) - 1 + marginCells,
+            0,
+            _columns - 1);
+        var firstRow = Math.Clamp(
+            (clipped.Top - screen.Top) * _rows /
+                Math.Max(1, screen.Height) - marginCells,
+            0,
+            _rows - 1);
+        var lastRow = Math.Clamp(
+            (int)Math.Ceiling(
+                (clipped.Bottom - screen.Top) *
+                _rows /
+                (double)Math.Max(1, screen.Height)) - 1 + marginCells,
+            0,
+            _rows - 1);
+
+        for (var row = firstRow; row <= lastRow; row++)
+        {
+            for (var column = firstColumn;
+                 column <= lastColumn;
+                 column++)
+            {
+                mask[row * _columns + column] = true;
+            }
+        }
+    }
+
+    private static bool ContainsWithTolerance(
+        System.Drawing.Rectangle outer,
+        System.Drawing.Rectangle inner,
+        int tolerance)
+    {
+        return inner.Left >= outer.Left - tolerance &&
+               inner.Top >= outer.Top - tolerance &&
+               inner.Right <= outer.Right + tolerance &&
+               inner.Bottom <= outer.Bottom + tolerance;
+    }
+
+    private static bool RectangleChanged(
+        System.Drawing.Rectangle first,
+        System.Drawing.Rectangle second)
+    {
+        const int tolerance = 8;
+
+        if (first.IsEmpty != second.IsEmpty)
+        {
+            return true;
+        }
+
+        if (first.IsEmpty)
+        {
+            return false;
+        }
+
+        return Math.Abs(first.Left - second.Left) > tolerance ||
+               Math.Abs(first.Top - second.Top) > tolerance ||
+               Math.Abs(first.Right - second.Right) > tolerance ||
+               Math.Abs(first.Bottom - second.Bottom) > tolerance;
+    }
     private void UpdateDimReferences(byte[] current)
     {
         for (var row = 0; row < _rows; row++)
@@ -494,7 +841,12 @@ internal sealed class MonitorSession : IDisposable
                 {
                     _wasEverDimmed[index] = true;
 
-                    if (!_hasDimReference[index])
+                    var rebaseOutsideTransition =
+                        _foregroundTransitionCapturesRemaining > 0 &&
+                        !_foregroundTransitionMask[index];
+
+                    if (!_hasDimReference[index] ||
+                        rebaseOutsideTransition)
                     {
                         CopyCellSamples(current, _dimReference, row, column);
                         _hasDimReference[index] = true;
@@ -1093,24 +1445,58 @@ internal sealed class MonitorSession : IDisposable
                 _cellAlpha[index] = _enabled ? _cells[index].Alpha : 0f;
             }
 
+            var now = Stopwatch.GetTimestamp();
+            var fastReapplyTicks = ToStopwatchTicks(
+                _settings.PreviouslyDimmedReapplySeconds * 1000.0);
+            var revealForeground =
+                IsForegroundWindowRecentlyActive(
+                    now,
+                    fastReapplyTicks);
+            var foregroundBounds = _foregroundWindowBounds;
+            var screenBounds = _screen.Bounds;
+
             for (var renderRow = 0; renderRow < _renderRows; renderRow++)
             {
                 var sourceRow = Math.Clamp(
                     renderRow * _rows / _renderRows,
                     0,
                     _rows - 1);
+                var screenY = screenBounds.Top +
+                    (renderRow + 0.5) *
+                    screenBounds.Height /
+                    _renderRows;
 
-                for (var renderColumn = 0; renderColumn < _renderColumns; renderColumn++)
+                for (var renderColumn = 0;
+                     renderColumn < _renderColumns;
+                     renderColumn++)
                 {
                     var sourceColumn = Math.Clamp(
                         renderColumn * _columns / _renderColumns,
                         0,
                         _columns - 1);
 
-                    var value = _cellAlpha[sourceRow * _columns + sourceColumn];
+                    var value =
+                        _cellAlpha[sourceRow * _columns + sourceColumn];
 
-                    var renderIndex = renderRow * _renderColumns + renderColumn;
+                    var renderIndex =
+                        renderRow * _renderColumns + renderColumn;
                     value *= 1f - _mouseRevealStrength[renderIndex];
+
+                    if (revealForeground &&
+                        !foregroundBounds.IsEmpty)
+                    {
+                        var screenX = screenBounds.Left +
+                            (renderColumn + 0.5) *
+                            screenBounds.Width /
+                            _renderColumns;
+
+                        if (foregroundBounds.Contains(
+                            (int)screenX,
+                            (int)screenY))
+                        {
+                            value = 0f;
+                        }
+                    }
 
                     if (value <= 0.003f)
                     {
@@ -1122,9 +1508,11 @@ internal sealed class MonitorSession : IDisposable
             }
         }
 
-        _overlay.SetMask(_renderAlpha, _renderColumns, _renderRows);
+        _overlay.SetMask(
+            _renderAlpha,
+            _renderColumns,
+            _renderRows);
     }
-
     private static float CalculateBlendFactor(
         double elapsedMilliseconds,
         int durationMilliseconds)
