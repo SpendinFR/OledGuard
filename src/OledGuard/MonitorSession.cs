@@ -33,6 +33,7 @@ internal sealed class MonitorSession : IDisposable
     private readonly byte[] _dimReference;
     private readonly bool[] _hasDimReference;
     private readonly byte[] _dimReferenceChangeStreak;
+    private readonly bool[] _wasEverDimmed;
     private readonly bool[] _rawStatic;
     private readonly bool[] _changedNow;
     private readonly bool[] _maskA;
@@ -107,6 +108,7 @@ internal sealed class MonitorSession : IDisposable
         _dimReference = new byte[sampleBytes];
         _hasDimReference = new bool[cellCount];
         _dimReferenceChangeStreak = new byte[cellCount];
+        _wasEverDimmed = new bool[cellCount];
         _rawStatic = new bool[cellCount];
         _changedNow = new bool[cellCount];
         _maskA = new bool[cellCount];
@@ -160,6 +162,7 @@ internal sealed class MonitorSession : IDisposable
             Array.Clear(_dimReference, 0, _dimReference.Length);
             Array.Clear(_hasDimReference, 0, _hasDimReference.Length);
             Array.Clear(_dimReferenceChangeStreak, 0, _dimReferenceChangeStreak.Length);
+            Array.Clear(_wasEverDimmed, 0, _wasEverDimmed.Length);
             Array.Clear(_rawStatic, 0, _rawStatic.Length);
             Array.Clear(_changedNow, 0, _changedNow.Length);
             Array.Clear(_maskA, 0, _maskA.Length);
@@ -330,7 +333,7 @@ internal sealed class MonitorSession : IDisposable
                 }
             }
 
-            BuildCleanDimMask();
+            BuildCleanDimMask(now);
             UpdateDimReferences(current);
             Buffer.BlockCopy(current, 0, _previous, 0, current.Length);
 
@@ -396,7 +399,7 @@ internal sealed class MonitorSession : IDisposable
                changedFraction >= _settings.ChangedSampleFraction;
     }
 
-    private void BuildCleanDimMask()
+    private void BuildCleanDimMask(long now)
     {
         Array.Copy(_finalDimMask, _previousDimMask, _finalDimMask.Length);
 
@@ -415,18 +418,29 @@ internal sealed class MonitorSession : IDisposable
         FillSmallBrightHoles(_finalDimMask);
         SuppressDarkRegions(_finalDimMask);
 
+        var fastReapplyTicks = ToStopwatchTicks(
+            _settings.PreviouslyDimmedReapplySeconds * 1000.0);
+
         for (var index = 0; index < _finalDimMask.Length; index++)
         {
-            if (!_previousDimMask[index])
+            if (_previousDimMask[index])
             {
+                var protectedImageChanged =
+                    _hasDimReference[index] &&
+                    _dimReferenceChangeStreak[index] >= 2;
+
+                if (!protectedImageChanged)
+                {
+                    _finalDimMask[index] = true;
+                }
+
                 continue;
             }
 
-            var protectedImageChanged =
-                _hasDimReference[index] &&
-                _dimReferenceChangeStreak[index] >= 2;
-
-            if (!protectedImageChanged)
+            var cell = _cells[index];
+            if (_wasEverDimmed[index] &&
+                !_changedNow[index] &&
+                now - cell.LastMotionTicks >= fastReapplyTicks)
             {
                 _finalDimMask[index] = true;
             }
@@ -478,6 +492,8 @@ internal sealed class MonitorSession : IDisposable
 
                 if (_finalDimMask[index])
                 {
+                    _wasEverDimmed[index] = true;
+
                     if (!_hasDimReference[index])
                     {
                         CopyCellSamples(current, _dimReference, row, column);

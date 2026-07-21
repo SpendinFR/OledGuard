@@ -5,7 +5,7 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 31;
+    public const int CurrentSchemaVersion = 32;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
@@ -41,6 +41,10 @@ public sealed class AppSettings
     public int MajorityDimThreshold { get; set; } = 6;
     public int MinimumDimRegionCells { get; set; } = 4;
     public int MaximumBrightHoleCells { get; set; } = 3;
+
+    // A location already protected in the current session may return quickly
+    // after its local content stops moving. New locations keep the full delay.
+    public int PreviouslyDimmedReapplySeconds { get; set; } = 8;
 
     // Mouse engine copied from build 3 (v0.5.0 / e1ddf1ed).
     public int MouseRevealRadiusPixels { get; set; } = 40;
@@ -86,14 +90,19 @@ public sealed class AppSettings
             MaximumBrightHoleCells = 3;
         }
 
-        MouseRevealRadiusPixels = 40;
-        MouseFeatherRadiusPixels = 72;
-        MouseRevealHoldMilliseconds = 30_000;
-        MouseStrokeIdleMilliseconds = 650;
-        MouseHoverRadiusPixels = 8;
-        MouseHoverRefreshMilliseconds = 500;
-        MouseRevealFadeMilliseconds = 140;
-        MouseReturnFadeMilliseconds = 5_000;
+        if (SchemaVersion < 31)
+        {
+            MouseRevealRadiusPixels = 40;
+            MouseFeatherRadiusPixels = 72;
+            MouseRevealHoldMilliseconds = 30_000;
+            MouseStrokeIdleMilliseconds = 650;
+            MouseHoverRadiusPixels = 8;
+            MouseHoverRefreshMilliseconds = 500;
+            MouseRevealFadeMilliseconds = 140;
+            MouseReturnFadeMilliseconds = 5_000;
+        }
+
+        PreviouslyDimmedReapplySeconds = 8;
         SchemaVersion = CurrentSchemaVersion;
     }
 
@@ -122,6 +131,10 @@ public sealed class AppSettings
         MajorityDimThreshold = Math.Clamp(MajorityDimThreshold, 5, 8);
         MinimumDimRegionCells = Math.Clamp(MinimumDimRegionCells, 1, 100);
         MaximumBrightHoleCells = Math.Clamp(MaximumBrightHoleCells, 0, 100);
+        PreviouslyDimmedReapplySeconds = Math.Clamp(
+            PreviouslyDimmedReapplySeconds,
+            2,
+            120);
 
         MouseRevealRadiusPixels = Math.Clamp(MouseRevealRadiusPixels, 0, 200);
         MouseFeatherRadiusPixels = Math.Clamp(MouseFeatherRadiusPixels, 1, 240);
