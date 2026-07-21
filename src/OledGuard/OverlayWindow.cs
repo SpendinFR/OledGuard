@@ -1,7 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
-using System.Windows.Media;
 using System.Windows.Media.Effects;
 using FormsScreen = System.Windows.Forms.Screen;
 
@@ -30,26 +29,27 @@ internal sealed class OverlayWindow : Window
             Foreground =
                 new System.Windows.Media.SolidColorBrush(
                     System.Windows.Media.Color.FromRgb(
-                        115,
-                        230,
+                        105,
+                        225,
                         255)),
             FontFamily =
                 new System.Windows.Media.FontFamily(
                     "Segoe UI Variable Display"),
             FontSize = 34,
-            FontWeight = FontWeights.SemiBold,
+            FontWeight =
+                System.Windows.FontWeights.SemiBold,
             Opacity = 0,
             IsHitTestVisible = false,
             Effect = new DropShadowEffect
             {
                 Color =
                     System.Windows.Media.Color.FromRgb(
-                        70,
-                        205,
+                        45,
+                        195,
                         255),
-                BlurRadius = 18,
+                BlurRadius = 22,
                 ShadowDepth = 0,
-                Opacity = 0.9
+                Opacity = 0.95
             }
         };
 
@@ -69,12 +69,20 @@ internal sealed class OverlayWindow : Window
         IsHitTestVisible = false;
         Content = root;
 
-        SourceInitialized += OnSourceInitialized;
+        SourceInitialized +=
+            OnSourceInitialized;
     }
 
-    public bool ExcludedFromCapture { get; private set; }
+    public bool ExcludedFromCapture
+    {
+        get;
+        private set;
+    }
 
-    public void SetMask(float[] alpha, int columns, int rows)
+    public void SetMask(
+        float[] alpha,
+        int columns,
+        int rows)
     {
         if (!Dispatcher.CheckAccess())
         {
@@ -108,10 +116,11 @@ internal sealed class OverlayWindow : Window
         }
 
         _statusText.Text = text;
-        _statusText.Opacity = Math.Clamp(
-            opacity,
-            0.0,
-            1.0);
+        _statusText.Opacity =
+            Math.Clamp(
+                opacity,
+                0.0,
+                1.0);
     }
 
     public void EnsureVisible()
@@ -129,10 +138,12 @@ internal sealed class OverlayWindow : Window
         EventArgs e)
     {
         _handle =
-            new WindowInteropHelper(this).Handle;
+            new WindowInteropHelper(this)
+                .Handle;
         _source =
             HwndSource.FromHwnd(_handle);
-        _source?.AddHook(WindowProcedure);
+        _source?.AddHook(
+            WindowProcedure);
 
         var currentStyle =
             NativeMethods.GetWindowLongPtr(

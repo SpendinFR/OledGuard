@@ -68,10 +68,12 @@ internal sealed class MonitorSession : IDisposable
     private bool _lastRevealAll;
     private int _nextRegionId = 1;
 
-    private bool _startupAnimationActive;
-    private long _startupAnimationStartTicks;
+    private bool _startupSnakeActive;
+    private long _startupSnakeStartTicks;
 
-    public MonitorSession(FormsScreen screen, AppSettings settings)
+    public MonitorSession(
+        FormsScreen screen,
+        AppSettings settings)
     {
         _screen = screen;
         _settings = settings;
@@ -87,7 +89,8 @@ internal sealed class MonitorSession : IDisposable
                 requestedWidth /
                 (double)Math.Max(1, bounds.Width)));
 
-        _samplesPerCell = settings.MotionZoneSamplesPerCell;
+        _samplesPerCell =
+            settings.MotionZoneSamplesPerCell;
         _columns = Math.Max(
             1,
             (int)Math.Ceiling(
@@ -99,19 +102,30 @@ internal sealed class MonitorSession : IDisposable
                 requestedHeight /
                 (double)_samplesPerCell));
 
-        _sampleWidth = checked(_columns * _samplesPerCell);
-        _sampleHeight = checked(_rows * _samplesPerCell);
-        _sampleStride = checked(_sampleWidth * 4);
+        _sampleWidth = checked(
+            _columns * _samplesPerCell);
+        _sampleHeight = checked(
+            _rows * _samplesPerCell);
+        _sampleStride = checked(
+            _sampleWidth * 4);
 
-        var cellCount = checked(_columns * _rows);
-        var frameBytes = checked(_sampleStride * _sampleHeight);
+        var cellCount = checked(
+            _columns * _rows);
+        var frameBytes = checked(
+            _sampleStride * _sampleHeight);
 
-        _previousFrame = new byte[frameBytes];
-        _rawMotion = new bool[cellCount];
-        _expandedMotion = new bool[cellCount];
-        _visited = new bool[cellCount];
-        _queue = new int[cellCount];
-        _renderAlpha = new float[cellCount];
+        _previousFrame =
+            new byte[frameBytes];
+        _rawMotion =
+            new bool[cellCount];
+        _expandedMotion =
+            new bool[cellCount];
+        _visited =
+            new bool[cellCount];
+        _queue =
+            new int[cellCount];
+        _renderAlpha =
+            new float[cellCount];
 
         _overlay = new OverlayWindow(screen);
         _sampler = new ScreenSampler(
@@ -127,20 +141,20 @@ internal sealed class MonitorSession : IDisposable
         _renderTimer.Tick += OnRenderTick;
     }
 
-    public bool ExcludedFromCapture => _overlay.ExcludedFromCapture;
+    public bool ExcludedFromCapture =>
+        _overlay.ExcludedFromCapture;
 
     public void Start(bool enabled)
     {
         _overlay.EnsureVisible();
         SetEnabled(enabled);
-        _captureLoop = Task.Run(CaptureLoopAsync);
+        _captureLoop =
+            Task.Run(CaptureLoopAsync);
         _renderTimer.Start();
     }
 
     public void SetEnabled(bool enabled)
     {
-        var showLaunchText = false;
-
         lock (_sync)
         {
             _enabled = enabled;
@@ -155,26 +169,30 @@ internal sealed class MonitorSession : IDisposable
             _detectedRegions.Clear();
             _trackedRegions.Clear();
 
-            Array.Clear(_previousFrame, 0, _previousFrame.Length);
-            Array.Clear(_rawMotion, 0, _rawMotion.Length);
-            Array.Clear(_expandedMotion, 0, _expandedMotion.Length);
-            Array.Clear(_visited, 0, _visited.Length);
+            Array.Clear(
+                _previousFrame,
+                0,
+                _previousFrame.Length);
+            Array.Clear(
+                _rawMotion,
+                0,
+                _rawMotion.Length);
+            Array.Clear(
+                _expandedMotion,
+                0,
+                _expandedMotion.Length);
+            Array.Clear(
+                _visited,
+                0,
+                _visited.Length);
 
             var now = Stopwatch.GetTimestamp();
             _revealAllUntilTicks = now;
-
-            _startupAnimationActive =
+            _startupSnakeActive =
                 enabled &&
-                _settings.BlockWaveStartupEnabled;
-            _startupAnimationStartTicks = now;
-            showLaunchText = _startupAnimationActive;
+                _settings.PixelSnakeStartupEnabled;
+            _startupSnakeStartTicks = now;
         }
-
-        _overlay.SetStatusText(
-            showLaunchText
-                ? _settings.BlockWaveStartupText
-                : string.Empty,
-            showLaunchText ? 1.0 : 0.0);
 
         PushMask();
     }
@@ -185,7 +203,8 @@ internal sealed class MonitorSession : IDisposable
         {
             _revealAllUntilTicks =
                 Stopwatch.GetTimestamp() +
-                ToStopwatchTicks(duration.TotalMilliseconds);
+                ToStopwatchTicks(
+                    duration.TotalMilliseconds);
             _maskDirty = true;
         }
     }
@@ -205,12 +224,14 @@ internal sealed class MonitorSession : IDisposable
 
                 if (shouldCapture)
                 {
-                    AnalyzeCapture(_sampler.Capture());
+                    AnalyzeCapture(
+                        _sampler.Capture());
                 }
 
                 await Task.Delay(
                     _settings.MotionZoneSamplingMilliseconds,
-                    _cancellation.Token).ConfigureAwait(false);
+                    _cancellation.Token)
+                    .ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -220,7 +241,8 @@ internal sealed class MonitorSession : IDisposable
             {
                 await Task.Delay(
                     1000,
-                    _cancellation.Token).ConfigureAwait(false);
+                    _cancellation.Token)
+                    .ConfigureAwait(false);
             }
         }
     }
@@ -266,33 +288,50 @@ internal sealed class MonitorSession : IDisposable
 
     private void DetectMotion(byte[] current)
     {
-        Array.Clear(_rawMotion, 0, _rawMotion.Length);
+        Array.Clear(
+            _rawMotion,
+            0,
+            _rawMotion.Length);
 
-        var pixelThreshold = _settings.MotionZonePixelThreshold;
-        var sampleCount = _samplesPerCell * _samplesPerCell;
+        var pixelThreshold =
+            _settings.MotionZonePixelThreshold;
+        var sampleCount =
+            _samplesPerCell *
+            _samplesPerCell;
         var minimumChangedSamples = Math.Max(
             1,
             (int)Math.Ceiling(
                 sampleCount *
                 _settings.MotionZoneChangedFraction));
 
-        for (var row = 0; row < _rows; row++)
+        for (var row = 0;
+             row < _rows;
+             row++)
         {
-            var sampleStartY = row * _samplesPerCell;
+            var sampleStartY =
+                row * _samplesPerCell;
 
-            for (var column = 0; column < _columns; column++)
+            for (var column = 0;
+                 column < _columns;
+                 column++)
             {
-                var sampleStartX = column * _samplesPerCell;
+                var sampleStartX =
+                    column * _samplesPerCell;
                 var changedSamples = 0;
                 var maximumDifference = 0;
                 var differenceTotal = 0;
 
-                for (var y = 0; y < _samplesPerCell; y++)
+                for (var y = 0;
+                     y < _samplesPerCell;
+                     y++)
                 {
                     var rowOffset =
-                        (sampleStartY + y) * _sampleStride;
+                        (sampleStartY + y) *
+                        _sampleStride;
 
-                    for (var x = 0; x < _samplesPerCell; x++)
+                    for (var x = 0;
+                         x < _samplesPerCell;
+                         x++)
                     {
                         var offset =
                             rowOffset +
@@ -330,10 +369,15 @@ internal sealed class MonitorSession : IDisposable
                     differenceTotal /
                     (double)sampleCount;
 
-                _rawMotion[row * _columns + column] =
-                    changedSamples >= minimumChangedSamples ||
-                    maximumDifference >= pixelThreshold * 2 ||
-                    meanDifference >= pixelThreshold * 0.55;
+                _rawMotion[
+                    row * _columns +
+                    column] =
+                    changedSamples >=
+                        minimumChangedSamples ||
+                    maximumDifference >=
+                        pixelThreshold * 2 ||
+                    meanDifference >=
+                        pixelThreshold * 0.55;
             }
         }
     }
@@ -345,13 +389,20 @@ internal sealed class MonitorSession : IDisposable
             0,
             _expandedMotion.Length);
 
-        var radius = _settings.MotionZoneMergeRadiusCells;
+        var radius =
+            _settings.MotionZoneMergeRadiusCells;
 
-        for (var row = 0; row < _rows; row++)
+        for (var row = 0;
+             row < _rows;
+             row++)
         {
-            for (var column = 0; column < _columns; column++)
+            for (var column = 0;
+                 column < _columns;
+                 column++)
             {
-                var index = row * _columns + column;
+                var index =
+                    row * _columns +
+                    column;
 
                 if (!_rawMotion[index])
                 {
@@ -362,9 +413,11 @@ internal sealed class MonitorSession : IDisposable
                      offsetY <= radius;
                      offsetY++)
                 {
-                    var targetRow = row + offsetY;
+                    var targetRow =
+                        row + offsetY;
 
-                    if (targetRow < 0 || targetRow >= _rows)
+                    if (targetRow < 0 ||
+                        targetRow >= _rows)
                     {
                         continue;
                     }
@@ -373,7 +426,8 @@ internal sealed class MonitorSession : IDisposable
                          offsetX <= radius;
                          offsetX++)
                     {
-                        var targetColumn = column + offsetX;
+                        var targetColumn =
+                            column + offsetX;
 
                         if (targetColumn < 0 ||
                             targetColumn >= _columns)
@@ -393,15 +447,21 @@ internal sealed class MonitorSession : IDisposable
     private void BuildDetectedRegions()
     {
         _detectedRegions.Clear();
-        Array.Clear(_visited, 0, _visited.Length);
 
-        var padding = _settings.MotionZonePaddingCells;
+        Array.Clear(
+            _visited,
+            0,
+            _visited.Length);
+
+        var padding =
+            _settings.MotionZonePaddingCells;
 
         for (var start = 0;
              start < _expandedMotion.Length;
              start++)
         {
-            if (!_expandedMotion[start] || _visited[start])
+            if (!_expandedMotion[start] ||
+                _visited[start])
             {
                 continue;
             }
@@ -411,22 +471,37 @@ internal sealed class MonitorSession : IDisposable
             _queue[tail++] = start;
             _visited[start] = true;
 
-            var minimumRow = start / _columns;
-            var maximumRow = minimumRow;
-            var minimumColumn = start % _columns;
-            var maximumColumn = minimumColumn;
+            var minimumRow =
+                start / _columns;
+            var maximumRow =
+                minimumRow;
+            var minimumColumn =
+                start % _columns;
+            var maximumColumn =
+                minimumColumn;
             var rawMotionCells = 0;
 
             while (head < tail)
             {
-                var index = _queue[head++];
-                var row = index / _columns;
-                var column = index % _columns;
+                var index =
+                    _queue[head++];
+                var row =
+                    index / _columns;
+                var column =
+                    index % _columns;
 
-                minimumRow = Math.Min(minimumRow, row);
-                maximumRow = Math.Max(maximumRow, row);
-                minimumColumn = Math.Min(minimumColumn, column);
-                maximumColumn = Math.Max(maximumColumn, column);
+                minimumRow = Math.Min(
+                    minimumRow,
+                    row);
+                maximumRow = Math.Max(
+                    maximumRow,
+                    row);
+                minimumColumn = Math.Min(
+                    minimumColumn,
+                    column);
+                maximumColumn = Math.Max(
+                    maximumColumn,
+                    column);
 
                 if (_rawMotion[index])
                 {
@@ -437,7 +512,8 @@ internal sealed class MonitorSession : IDisposable
                      offsetY <= 1;
                      offsetY++)
                 {
-                    var neighbourRow = row + offsetY;
+                    var neighbourRow =
+                        row + offsetY;
 
                     if (neighbourRow < 0 ||
                         neighbourRow >= _rows)
@@ -449,12 +525,14 @@ internal sealed class MonitorSession : IDisposable
                          offsetX <= 1;
                          offsetX++)
                     {
-                        if (offsetX == 0 && offsetY == 0)
+                        if (offsetX == 0 &&
+                            offsetY == 0)
                         {
                             continue;
                         }
 
-                        var neighbourColumn = column + offsetX;
+                        var neighbourColumn =
+                            column + offsetX;
 
                         if (neighbourColumn < 0 ||
                             neighbourColumn >= _columns)
@@ -463,14 +541,18 @@ internal sealed class MonitorSession : IDisposable
                         }
 
                         var neighbourIndex =
-                            neighbourRow * _columns +
+                            neighbourRow *
+                            _columns +
                             neighbourColumn;
 
                         if (!_visited[neighbourIndex] &&
-                            _expandedMotion[neighbourIndex])
+                            _expandedMotion[
+                                neighbourIndex])
                         {
-                            _visited[neighbourIndex] = true;
-                            _queue[tail++] = neighbourIndex;
+                            _visited[
+                                neighbourIndex] = true;
+                            _queue[tail++] =
+                                neighbourIndex;
                         }
                     }
                 }
@@ -481,7 +563,9 @@ internal sealed class MonitorSession : IDisposable
                 continue;
             }
 
-            minimumRow = Math.Max(0, minimumRow - padding);
+            minimumRow = Math.Max(
+                0,
+                minimumRow - padding);
             maximumRow = Math.Min(
                 _rows - 1,
                 maximumRow + padding);
@@ -560,7 +644,8 @@ internal sealed class MonitorSession : IDisposable
                         tracked.MinimumColumn,
                         detected.MinimumColumn) + 1);
                 var intersection =
-                    intersectionRows * intersectionColumns;
+                    intersectionRows *
+                    intersectionColumns;
                 var score =
                     intersection * 100 -
                     (rowGap + columnGap) * 10;
@@ -578,10 +663,14 @@ internal sealed class MonitorSession : IDisposable
                     new TrackedRegion
                     {
                         Id = _nextRegionId++,
-                        MinimumRow = detected.MinimumRow,
-                        MaximumRow = detected.MaximumRow,
-                        MinimumColumn = detected.MinimumColumn,
-                        MaximumColumn = detected.MaximumColumn,
+                        MinimumRow =
+                            detected.MinimumRow,
+                        MaximumRow =
+                            detected.MaximumRow,
+                        MinimumColumn =
+                            detected.MinimumColumn,
+                        MaximumColumn =
+                            detected.MaximumColumn,
                         WindowStartTicks = now,
                         LastMotionTicks = now,
                         LastHitCaptureTicks = now,
@@ -632,20 +721,26 @@ internal sealed class MonitorSession : IDisposable
         double elapsedMilliseconds)
     {
         var changed = false;
-        var oneShotHoldTicks = ToStopwatchTicks(
-            _settings.MotionZoneOneShotHoldMilliseconds);
-        var recurringMinimumSpanTicks = ToStopwatchTicks(
-            _settings.MotionZoneRecurringMinimumSpanMilliseconds);
-        var recurringHoldTicks = ToStopwatchTicks(
-            _settings.MotionZoneRecurringHoldMilliseconds);
-        var closeDurationTicks = ToStopwatchTicks(
-            _settings.BlockWaveRegionCloseDurationMilliseconds);
+        var oneShotHoldTicks =
+            ToStopwatchTicks(
+                _settings.MotionZoneOneShotHoldMilliseconds);
+        var recurringMinimumSpanTicks =
+            ToStopwatchTicks(
+                _settings.MotionZoneRecurringMinimumSpanMilliseconds);
+        var recurringHoldTicks =
+            ToStopwatchTicks(
+                _settings.MotionZoneRecurringHoldMilliseconds);
+        var closingDurationTicks =
+            ToStopwatchTicks(
+                _settings.PixelSnakeRegionDurationMilliseconds);
 
-        for (var index = _trackedRegions.Count - 1;
+        for (var index =
+                 _trackedRegions.Count - 1;
              index >= 0;
              index--)
         {
-            var region = _trackedRegions[index];
+            var region =
+                _trackedRegions[index];
 
             var recurring =
                 region.MotionHits >=
@@ -658,22 +753,26 @@ internal sealed class MonitorSession : IDisposable
             var oneShot =
                 now - region.LastMotionTicks <=
                     oneShotHoldTicks;
-            var targetVisible = recurring || oneShot;
+            var visible =
+                recurring || oneShot;
 
-            if (targetVisible)
+            if (visible)
             {
                 region.ClosingAnimation = false;
 
+                var duration = Math.Max(
+                    1,
+                    _settings.MotionZoneRevealFadeMilliseconds);
                 var step = (float)(
                     elapsedMilliseconds /
-                    Math.Max(
-                        1,
-                        _settings.MotionZoneRevealFadeMilliseconds));
+                    duration);
                 var next = Math.Min(
                     1f,
                     region.Reveal + step);
 
-                if (Math.Abs(next - region.Reveal) >
+                if (Math.Abs(
+                        next -
+                        region.Reveal) >
                     0.0005f)
                 {
                     region.Reveal = next;
@@ -694,8 +793,9 @@ internal sealed class MonitorSession : IDisposable
 
             if (region.ClosingAnimation)
             {
-                if (now - region.ClosingAnimationStartTicks >=
-                    closeDurationTicks)
+                if (now -
+                    region.ClosingAnimationStartTicks >=
+                    closingDurationTicks)
                 {
                     region.ClosingAnimation = false;
                     region.Reveal = 0f;
@@ -709,7 +809,7 @@ internal sealed class MonitorSession : IDisposable
                 Math.Max(
                     oneShotHoldTicks,
                     recurringHoldTicks) +
-                closeDurationTicks +
+                closingDurationTicks +
                 ToStopwatchTicks(1000);
 
             if (region.Reveal <= 0.001f &&
@@ -724,10 +824,13 @@ internal sealed class MonitorSession : IDisposable
         return changed;
     }
 
-    private void OnRenderTick(object? sender, EventArgs e)
+    private void OnRenderTick(
+        object? sender,
+        EventArgs e)
     {
         var now = Stopwatch.GetTimestamp();
-        NativeMethods.GetCursorPos(out var cursor);
+        NativeMethods.GetCursorPos(
+            out var cursor);
 
         var shouldPush = false;
 
@@ -735,32 +838,33 @@ internal sealed class MonitorSession : IDisposable
         {
             var elapsedMilliseconds =
                 _lastRenderTicks == 0
-                    ? _renderTimer.Interval.TotalMilliseconds
+                    ? _renderTimer.Interval
+                        .TotalMilliseconds
                     : FromStopwatchTicks(
                         now - _lastRenderTicks);
             _lastRenderTicks = now;
 
-            var changed = UpdateTrackedRegionReveal(
-                now,
-                elapsedMilliseconds);
+            var changed =
+                UpdateTrackedRegionReveal(
+                    now,
+                    elapsedMilliseconds);
             var revealAll =
                 _enabled &&
                 now < _revealAllUntilTicks;
             var cursorChanged =
                 cursor.X != _lastCursorX ||
                 cursor.Y != _lastCursorY;
-            var startupAnimating =
-                IsStartupAnimating(now);
-            var closingAnimating =
+            var animationActive =
+                IsStartupSnakeActive(now) ||
                 _trackedRegions.Any(
-                    region => region.ClosingAnimation);
+                    region =>
+                        region.ClosingAnimation);
 
             shouldPush =
                 changed ||
                 _maskDirty ||
                 cursorChanged ||
-                startupAnimating ||
-                closingAnimating ||
+                animationActive ||
                 revealAll != _lastRevealAll;
 
             _maskDirty = false;
@@ -787,7 +891,8 @@ internal sealed class MonitorSession : IDisposable
                 !_enabled ||
                 now < _revealAllUntilTicks;
             var maximumOpacity =
-                (float)_settings.MaximumMaskOpacity;
+                (float)_settings
+                    .MaximumMaskOpacity;
 
             if (revealAll)
             {
@@ -796,14 +901,14 @@ internal sealed class MonitorSession : IDisposable
                     0,
                     _renderAlpha.Length);
             }
-            else if (IsStartupAnimating(now))
+            else if (IsStartupSnakeActive(now))
             {
-                ApplyStartupBlockWave(
+                ApplyStartupPixelSnake(
                     now,
                     maximumOpacity,
                     out statusOpacity);
                 statusText =
-                    _settings.BlockWaveStartupText;
+                    _settings.PixelSnakeStartupText;
             }
             else
             {
@@ -811,18 +916,34 @@ internal sealed class MonitorSession : IDisposable
                     _renderAlpha,
                     maximumOpacity);
 
+                // A closing region starts fully visible. Real separated square
+                // blocks then darken it from left to right and top to bottom.
                 foreach (var region in _trackedRegions)
                 {
-                    if (region.ClosingAnimation)
+                    if (!region.ClosingAnimation)
                     {
-                        ApplyRegionCloseBlockWave(
-                            region,
-                            now,
-                            maximumOpacity);
                         continue;
                     }
 
-                    if (region.Reveal <= 0.001f)
+                    SetRectangleAlpha(
+                        region.MinimumRow,
+                        region.MaximumRow,
+                        region.MinimumColumn,
+                        region.MaximumColumn,
+                        0f);
+
+                    ApplyRegionPixelSnake(
+                        region,
+                        now,
+                        maximumOpacity);
+                }
+
+                // Active regions always win over a closing region if they
+                // overlap.
+                foreach (var region in _trackedRegions)
+                {
+                    if (region.ClosingAnimation ||
+                        region.Reveal <= 0.001f)
                     {
                         continue;
                     }
@@ -839,6 +960,8 @@ internal sealed class MonitorSession : IDisposable
                         alpha);
                 }
 
+                // Exact 4.2 mouse behavior: one current uniform block and no
+                // trail or remembered stroke.
                 ApplyCurrentMouseBlockReveal();
             }
         }
@@ -852,76 +975,54 @@ internal sealed class MonitorSession : IDisposable
             _rows);
     }
 
-    private void ApplyStartupBlockWave(
+    private void ApplyStartupPixelSnake(
         long now,
         float maximumOpacity,
         out double textOpacity)
     {
         var duration = Math.Max(
-            200,
-            _settings.BlockWaveStartupDurationMilliseconds);
+            300,
+            _settings.PixelSnakeStartupDurationMilliseconds);
         var progress = Math.Clamp(
             FromStopwatchTicks(
-                now - _startupAnimationStartTicks) /
+                now -
+                _startupSnakeStartTicks) /
                 duration,
             0.0,
             1.0);
-        var blockCells = Math.Max(
-            1,
-            _settings.BlockWaveStartupBlockCells);
-        var gradientBlocks = Math.Max(
-            1,
-            _settings.BlockWaveStartupGradientBlocks);
-        var blockColumns = Math.Max(
-            1,
-            (int)Math.Ceiling(
-                _columns /
-                (double)blockCells));
-        var blockRows = Math.Max(
-            1,
-            (int)Math.Ceiling(
-                _rows /
-                (double)blockCells));
-        var maximumOrder = Math.Max(
-            1.0,
-            blockColumns - 1 +
-            (blockRows - 1) * 0.72);
-        var band =
-            gradientBlocks /
-            maximumOrder;
 
-        for (var row = 0; row < _rows; row++)
+        Array.Clear(
+            _renderAlpha,
+            0,
+            _renderAlpha.Length);
+
+        ApplyPixelSnake(
+            0,
+            _rows - 1,
+            0,
+            _columns - 1,
+            progress,
+            maximumOpacity,
+            _settings.PixelSnakeBlockCells,
+            _settings.PixelSnakeGapCells,
+            _settings.PixelSnakeGradientBlocks);
+
+        // The square gaps close only at the very end so the pixel structure is
+        // clearly visible during most of the animation.
+        if (progress > 0.88)
         {
-            var blockRow = row / blockCells;
+            var finish = SmoothStep01(
+                (progress - 0.88) /
+                0.12);
 
-            for (var column = 0;
-                 column < _columns;
-                 column++)
+            for (var index = 0;
+                 index < _renderAlpha.Length;
+                 index++)
             {
-                var blockColumn =
-                    column / blockCells;
-                var orderedColumn =
-                    blockRow % 2 == 0
-                        ? blockColumn
-                        : blockColumns -
-                          1 -
-                          blockColumn;
-                var order =
-                    (orderedColumn +
-                     blockRow * 0.72) /
-                    maximumOrder;
-                var local =
-                    (progress * (1.0 + band) -
-                     order) /
-                    band;
-                var darkAmount =
-                    SmoothStep01(local);
-
-                _renderAlpha[
-                    row * _columns +
-                    column] =
+                _renderAlpha[index] = Math.Max(
+                    _renderAlpha[index],
                     maximumOpacity *
-                    (float)darkAmount;
+                    (float)finish);
             }
         }
 
@@ -945,14 +1046,14 @@ internal sealed class MonitorSession : IDisposable
         }
     }
 
-    private void ApplyRegionCloseBlockWave(
+    private void ApplyRegionPixelSnake(
         TrackedRegion region,
         long now,
         float maximumOpacity)
     {
         var duration = Math.Max(
-            100,
-            _settings.BlockWaveRegionCloseDurationMilliseconds);
+            150,
+            _settings.PixelSnakeRegionDurationMilliseconds);
         var progress = Math.Clamp(
             FromStopwatchTicks(
                 now -
@@ -960,143 +1061,46 @@ internal sealed class MonitorSession : IDisposable
                 duration,
             0.0,
             1.0);
-        var blockCells = Math.Max(
-            1,
-            _settings.BlockWaveRegionCloseBlockCells);
-        var gradientBlocks = Math.Max(
-            1,
-            _settings.BlockWaveRegionCloseGradientBlocks);
-        var regionColumns =
-            region.MaximumColumn -
-            region.MinimumColumn +
-            1;
-        var regionRows =
-            region.MaximumRow -
-            region.MinimumRow +
-            1;
-        var blockColumns = Math.Max(
-            1,
-            (int)Math.Ceiling(
-                regionColumns /
-                (double)blockCells));
-        var blockRows = Math.Max(
-            1,
-            (int)Math.Ceiling(
-                regionRows /
-                (double)blockCells));
-        var maximumOrder = Math.Max(
-            1.0,
-            blockColumns - 1 +
-            (blockRows - 1) * 0.65);
-        var band =
-            gradientBlocks /
-            maximumOrder;
 
-        for (var row = region.MinimumRow;
-             row <= region.MaximumRow;
-             row++)
+        ApplyPixelSnake(
+            region.MinimumRow,
+            region.MaximumRow,
+            region.MinimumColumn,
+            region.MaximumColumn,
+            progress,
+            maximumOpacity,
+            _settings.PixelSnakeBlockCells,
+            _settings.PixelSnakeGapCells,
+            _settings.PixelSnakeGradientBlocks);
+
+        if (progress > 0.84)
         {
-            var localRow =
-                row - region.MinimumRow;
-            var blockRow =
-                localRow / blockCells;
+            var finish = SmoothStep01(
+                (progress - 0.84) /
+                0.16);
+            var fillAlpha =
+                maximumOpacity *
+                (float)finish;
 
-            for (var column = region.MinimumColumn;
-                 column <= region.MaximumColumn;
-                 column++)
-            {
-                var localColumn =
-                    column - region.MinimumColumn;
-                var blockColumn =
-                    localColumn / blockCells;
-                var orderedColumn =
-                    blockRow % 2 == 0
-                        ? blockColumn
-                        : blockColumns -
-                          1 -
-                          blockColumn;
-                var order =
-                    (orderedColumn +
-                     blockRow * 0.65) /
-                    maximumOrder;
-                var local =
-                    (progress * (1.0 + band) -
-                     order) /
-                    band;
-                var darkAmount =
-                    SmoothStep01(local);
-                var alpha =
-                    maximumOpacity *
-                    (float)darkAmount;
-
-                var index =
-                    row * _columns +
-                    column;
-                _renderAlpha[index] = Math.Min(
-                    _renderAlpha[index],
-                    alpha);
-            }
+            FillRectangleWithMinimumFloorAlpha(
+                region.MinimumRow,
+                region.MaximumRow,
+                region.MinimumColumn,
+                region.MaximumColumn,
+                fillAlpha);
         }
     }
 
-    private void ApplyCurrentMouseBlockReveal()
-    {
-        if (!NativeMethods.GetCursorPos(out var cursor))
-        {
-            return;
-        }
-
-        var bounds = _screen.Bounds;
-
-        if (!bounds.Contains(cursor.X, cursor.Y))
-        {
-            return;
-        }
-
-        var centerColumn = Math.Clamp(
-            (cursor.X - bounds.Left) *
-            _columns /
-            Math.Max(1, bounds.Width),
-            0,
-            _columns - 1);
-        var centerRow = Math.Clamp(
-            (cursor.Y - bounds.Top) *
-            _rows /
-            Math.Max(1, bounds.Height),
-            0,
-            _rows - 1);
-        var cellWidth =
-            bounds.Width / (double)_columns;
-        var cellHeight =
-            bounds.Height / (double)_rows;
-        var radiusPixels = Math.Max(
-            12,
-            _settings.MouseRevealRadiusPixels);
-        var halfColumns = Math.Max(
-            1,
-            (int)Math.Ceiling(
-                radiusPixels /
-                Math.Max(1.0, cellWidth)));
-        var halfRows = Math.Max(
-            1,
-            (int)Math.Ceiling(
-                radiusPixels /
-                Math.Max(1.0, cellHeight)));
-
-        FillRectangleWithMinimumAlpha(
-            centerRow - halfRows,
-            centerRow + halfRows,
-            centerColumn - halfColumns,
-            centerColumn + halfColumns,
-            0f);
-    }
-
-    private void FillRectangleWithMinimumAlpha(
+    private void ApplyPixelSnake(
         int minimumRow,
         int maximumRow,
         int minimumColumn,
         int maximumColumn,
-        float alpha)
+        double progress,
+        float maximumOpacity,
+        int blockCells,
+        int gapCells,
+        int gradientBlocks)
     {
         minimumRow = Math.Clamp(
             minimumRow,
@@ -1114,6 +1118,183 @@ internal sealed class MonitorSession : IDisposable
             maximumColumn,
             0,
             _columns - 1);
+
+        blockCells = Math.Max(
+            2,
+            blockCells);
+        gapCells = Math.Clamp(
+            gapCells,
+            0,
+            blockCells - 1);
+        gradientBlocks = Math.Max(
+            1,
+            gradientBlocks);
+
+        var visibleCells =
+            Math.Max(
+                1,
+                blockCells -
+                gapCells);
+        var regionWidth =
+            maximumColumn -
+            minimumColumn +
+            1;
+        var regionHeight =
+            maximumRow -
+            minimumRow +
+            1;
+        var blockColumns = Math.Max(
+            1,
+            (int)Math.Ceiling(
+                regionWidth /
+                (double)blockCells));
+        var blockRows = Math.Max(
+            1,
+            (int)Math.Ceiling(
+                regionHeight /
+                (double)blockCells));
+        var totalBlocks =
+            blockColumns *
+            blockRows;
+        var head =
+            progress *
+            (totalBlocks +
+             gradientBlocks);
+
+        for (var blockRow = 0;
+             blockRow < blockRows;
+             blockRow++)
+        {
+            for (var blockColumn = 0;
+                 blockColumn < blockColumns;
+                 blockColumn++)
+            {
+                // Always left to right. The next row starts again on the left.
+                var order =
+                    blockRow *
+                    blockColumns +
+                    blockColumn;
+                var distance =
+                    head -
+                    order;
+
+                if (distance <= 0)
+                {
+                    continue;
+                }
+
+                var strength =
+                    distance >= gradientBlocks
+                        ? 1.0
+                        : SmoothStep01(
+                            distance /
+                            gradientBlocks);
+                var alpha =
+                    maximumOpacity *
+                    (float)strength;
+
+                var startRow =
+                    minimumRow +
+                    blockRow *
+                    blockCells;
+                var startColumn =
+                    minimumColumn +
+                    blockColumn *
+                    blockCells;
+                var endRow = Math.Min(
+                    maximumRow,
+                    startRow +
+                    visibleCells -
+                    1);
+                var endColumn = Math.Min(
+                    maximumColumn,
+                    startColumn +
+                    visibleCells -
+                    1);
+
+                SetRectangleAlphaMaximum(
+                    startRow,
+                    endRow,
+                    startColumn,
+                    endColumn,
+                    alpha);
+            }
+        }
+    }
+
+    private void ApplyCurrentMouseBlockReveal()
+    {
+        if (!NativeMethods.GetCursorPos(
+                out var cursor))
+        {
+            return;
+        }
+
+        var bounds = _screen.Bounds;
+
+        if (!bounds.Contains(
+                cursor.X,
+                cursor.Y))
+        {
+            return;
+        }
+
+        var centerColumn = Math.Clamp(
+            (cursor.X - bounds.Left) *
+            _columns /
+            Math.Max(1, bounds.Width),
+            0,
+            _columns - 1);
+        var centerRow = Math.Clamp(
+            (cursor.Y - bounds.Top) *
+            _rows /
+            Math.Max(1, bounds.Height),
+            0,
+            _rows - 1);
+        var cellWidth =
+            bounds.Width /
+            (double)_columns;
+        var cellHeight =
+            bounds.Height /
+            (double)_rows;
+        var radiusPixels = Math.Max(
+            12,
+            _settings.MouseRevealRadiusPixels);
+        var halfColumns = Math.Max(
+            1,
+            (int)Math.Ceiling(
+                radiusPixels /
+                Math.Max(
+                    1.0,
+                    cellWidth)));
+        var halfRows = Math.Max(
+            1,
+            (int)Math.Ceiling(
+                radiusPixels /
+                Math.Max(
+                    1.0,
+                    cellHeight)));
+
+        FillRectangleWithMinimumAlpha(
+            centerRow - halfRows,
+            centerRow + halfRows,
+            centerColumn - halfColumns,
+            centerColumn + halfColumns,
+            0f);
+    }
+
+    private void FillRectangleWithMinimumAlpha(
+        int minimumRow,
+        int maximumRow,
+        int minimumColumn,
+        int maximumColumn,
+        float alpha)
+    {
+        ClampRectangle(
+            ref minimumRow,
+            ref maximumRow,
+            ref minimumColumn,
+            ref maximumColumn);
 
         for (var row = minimumRow;
              row <= maximumRow;
@@ -1133,22 +1314,138 @@ internal sealed class MonitorSession : IDisposable
         }
     }
 
-    private bool IsStartupAnimating(long now)
+    private void FillRectangleWithMinimumFloorAlpha(
+        int minimumRow,
+        int maximumRow,
+        int minimumColumn,
+        int maximumColumn,
+        float alpha)
     {
-        if (!_startupAnimationActive)
+        ClampRectangle(
+            ref minimumRow,
+            ref maximumRow,
+            ref minimumColumn,
+            ref maximumColumn);
+
+        for (var row = minimumRow;
+             row <= maximumRow;
+             row++)
+        {
+            for (var column = minimumColumn;
+                 column <= maximumColumn;
+                 column++)
+            {
+                var index =
+                    row * _columns +
+                    column;
+                _renderAlpha[index] = Math.Max(
+                    _renderAlpha[index],
+                    alpha);
+            }
+        }
+    }
+
+    private void SetRectangleAlpha(
+        int minimumRow,
+        int maximumRow,
+        int minimumColumn,
+        int maximumColumn,
+        float alpha)
+    {
+        ClampRectangle(
+            ref minimumRow,
+            ref maximumRow,
+            ref minimumColumn,
+            ref maximumColumn);
+
+        for (var row = minimumRow;
+             row <= maximumRow;
+             row++)
+        {
+            for (var column = minimumColumn;
+                 column <= maximumColumn;
+                 column++)
+            {
+                _renderAlpha[
+                    row * _columns +
+                    column] = alpha;
+            }
+        }
+    }
+
+    private void SetRectangleAlphaMaximum(
+        int minimumRow,
+        int maximumRow,
+        int minimumColumn,
+        int maximumColumn,
+        float alpha)
+    {
+        ClampRectangle(
+            ref minimumRow,
+            ref maximumRow,
+            ref minimumColumn,
+            ref maximumColumn);
+
+        for (var row = minimumRow;
+             row <= maximumRow;
+             row++)
+        {
+            for (var column = minimumColumn;
+                 column <= maximumColumn;
+                 column++)
+            {
+                var index =
+                    row * _columns +
+                    column;
+                _renderAlpha[index] = Math.Max(
+                    _renderAlpha[index],
+                    alpha);
+            }
+        }
+    }
+
+    private void ClampRectangle(
+        ref int minimumRow,
+        ref int maximumRow,
+        ref int minimumColumn,
+        ref int maximumColumn)
+    {
+        minimumRow = Math.Clamp(
+            minimumRow,
+            0,
+            _rows - 1);
+        maximumRow = Math.Clamp(
+            maximumRow,
+            0,
+            _rows - 1);
+        minimumColumn = Math.Clamp(
+            minimumColumn,
+            0,
+            _columns - 1);
+        maximumColumn = Math.Clamp(
+            maximumColumn,
+            0,
+            _columns - 1);
+    }
+
+    private bool IsStartupSnakeActive(long now)
+    {
+        if (!_startupSnakeActive)
         {
             return false;
         }
 
         var duration = Math.Max(
-            200,
-            _settings.BlockWaveStartupDurationMilliseconds);
+            300,
+            _settings.PixelSnakeStartupDurationMilliseconds);
 
         if (FromStopwatchTicks(
-                now - _startupAnimationStartTicks) >=
+                now -
+                _startupSnakeStartTicks) >=
             duration)
         {
-            _startupAnimationActive = false;
+            _startupSnakeActive = false;
+            _maskDirty = true;
             return false;
         }
 
@@ -1163,7 +1460,9 @@ internal sealed class MonitorSession : IDisposable
             1.0);
         return clamped *
                clamped *
-               (3.0 - 2.0 * clamped);
+               (3.0 -
+                2.0 *
+                clamped);
     }
 
     private static int FollowMinimumBoundary(
@@ -1175,7 +1474,9 @@ internal sealed class MonitorSession : IDisposable
             return detected;
         }
 
-        return Math.Min(detected, current + 1);
+        return Math.Min(
+            detected,
+            current + 1);
     }
 
     private static int FollowMaximumBoundary(
@@ -1187,7 +1488,9 @@ internal sealed class MonitorSession : IDisposable
             return detected;
         }
 
-        return Math.Max(detected, current - 1);
+        return Math.Max(
+            detected,
+            current - 1);
     }
 
     private static int AxisGap(
@@ -1196,14 +1499,16 @@ internal sealed class MonitorSession : IDisposable
         int secondMinimum,
         int secondMaximum)
     {
-        if (firstMaximum < secondMinimum)
+        if (firstMaximum <
+            secondMinimum)
         {
             return secondMinimum -
                    firstMaximum -
                    1;
         }
 
-        if (secondMaximum < firstMinimum)
+        if (secondMaximum <
+            firstMinimum)
         {
             return firstMinimum -
                    secondMaximum -
