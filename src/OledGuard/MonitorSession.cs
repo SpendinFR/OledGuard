@@ -981,27 +981,19 @@ internal sealed class MonitorSession : IDisposable
 
             for (var renderRow = 0; renderRow < _renderRows; renderRow++)
             {
-                var gridY = (renderRow + 0.5f) * _rows / _renderRows - 0.5f;
-                var y0 = Math.Clamp((int)MathF.Floor(gridY), 0, _rows - 1);
-                var y1 = Math.Min(_rows - 1, y0 + 1);
-                var ty = Math.Clamp(gridY - y0, 0f, 1f);
+                var sourceRow = Math.Clamp(
+                    renderRow * _rows / _renderRows,
+                    0,
+                    _rows - 1);
 
                 for (var renderColumn = 0; renderColumn < _renderColumns; renderColumn++)
                 {
-                    var gridX = (renderColumn + 0.5f) * _columns / _renderColumns - 0.5f;
-                    var x0 = Math.Clamp((int)MathF.Floor(gridX), 0, _columns - 1);
-                    var x1 = Math.Min(_columns - 1, x0 + 1);
-                    var tx = Math.Clamp(gridX - x0, 0f, 1f);
+                    var sourceColumn = Math.Clamp(
+                        renderColumn * _columns / _renderColumns,
+                        0,
+                        _columns - 1);
 
-                    var top = Lerp(
-                        _cellAlpha[y0 * _columns + x0],
-                        _cellAlpha[y0 * _columns + x1],
-                        tx);
-                    var bottom = Lerp(
-                        _cellAlpha[y1 * _columns + x0],
-                        _cellAlpha[y1 * _columns + x1],
-                        tx);
-                    var value = Lerp(top, bottom, ty);
+                    var value = _cellAlpha[sourceRow * _columns + sourceColumn];
 
                     var renderIndex = renderRow * _renderColumns + renderColumn;
                     value *= 1f - _mouseRevealStrength[renderIndex];
