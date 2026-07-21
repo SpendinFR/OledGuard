@@ -5,7 +5,7 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 35;
+    public const int CurrentSchemaVersion = 36;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
@@ -46,28 +46,27 @@ public sealed class AppSettings
     // after its local content stops moving. New locations keep the full delay.
     public int PreviouslyDimmedReapplySeconds { get; set; } = 8;
 
-    // Inverted motion-zone prototype. It reveals clean content regions rather
-    // than individual pixels or edges.
+    // Official focus engine: the screen is uniformly dark except for clean,
+    // binary active rectangles and the temporary mouse trail.
     public int MotionZoneCaptureWidth { get; set; } = 1280;
     public int MotionZoneSamplesPerCell { get; set; } = 4;
-    public int MotionZoneSamplingMilliseconds { get; set; } = 40;
+    public int MotionZoneSamplingMilliseconds { get; set; } = 33;
     public int MotionZonePixelThreshold { get; set; } = 12;
     public double MotionZoneChangedFraction { get; set; } = 0.08;
     public int MotionZoneMergeRadiusCells { get; set; } = 1;
     public int MotionZonePaddingCells { get; set; } = 1;
+    public int MotionZoneMinimumMotionCells { get; set; } = 2;
+    public int MotionZoneRenderMergeGapCells { get; set; } = 2;
+    public double MotionZoneSceneChangeFraction { get; set; } = 0.06;
+    public double MotionZoneSceneChangeOverlapFraction { get; set; } = 0.60;
     public int MotionZoneOneShotHoldMilliseconds { get; set; } = 3000;
     public int MotionZoneRecurringWindowMilliseconds { get; set; } = 5000;
     public int MotionZoneRecurringMinimumSpanMilliseconds { get; set; } = 180;
     public int MotionZoneRecurringHits { get; set; } = 3;
     public int MotionZoneRecurringHoldMilliseconds { get; set; } = 30000;
     public int MotionZoneRevealFadeMilliseconds { get; set; } = 20;
-    public int MotionZoneReturnFadeMilliseconds { get; set; } = 500;
+    public int MotionZoneReturnFadeMilliseconds { get; set; } = 50;
     public int MotionZoneTrackingGapCells { get; set; } = 8;
-    public int MotionZoneSnakeMinimumDistanceCells { get; set; } = 12;
-    public int MotionZoneSnakeDurationMilliseconds { get; set; } = 520;
-    public int MotionZoneSnakeTailCells { get; set; } = 18;
-    public int MotionZoneSnakeThicknessCells { get; set; } = 1;
-    public double MotionZoneSnakeRevealStrength { get; set; } = 0.72;
 
     // Mouse engine copied from build 3 (v0.5.0 / e1ddf1ed).
     public int MouseRevealRadiusPixels { get; set; } = 40;
@@ -155,18 +154,23 @@ public sealed class AppSettings
             MotionZoneRevealFadeMilliseconds = 20;
             MotionZoneReturnFadeMilliseconds = 500;
             MotionZoneTrackingGapCells = 8;
-            MotionZoneSnakeMinimumDistanceCells = 12;
-            MotionZoneSnakeDurationMilliseconds = 520;
-            MotionZoneSnakeTailCells = 18;
-            MotionZoneSnakeThicknessCells = 1;
-            MotionZoneSnakeRevealStrength = 0.72;
         }
 
-        if (SchemaVersion < 35)
+        if (SchemaVersion < 36)
         {
+            MotionZoneSamplingMilliseconds = 33;
+            MotionZoneMinimumMotionCells = 2;
+            MotionZoneRenderMergeGapCells = 2;
+            MotionZoneSceneChangeFraction = 0.06;
+            MotionZoneSceneChangeOverlapFraction = 0.60;
             MotionZoneOneShotHoldMilliseconds = 3000;
             MotionZoneRecurringWindowMilliseconds = 5000;
+            MotionZoneRecurringMinimumSpanMilliseconds = 180;
+            MotionZoneRecurringHits = 3;
             MotionZoneRecurringHoldMilliseconds = 30000;
+            MotionZoneRevealFadeMilliseconds = 20;
+            MotionZoneReturnFadeMilliseconds = 50;
+            MotionZoneTrackingGapCells = 8;
             MouseRevealHoldMilliseconds = 3000;
         }
 
@@ -213,7 +217,7 @@ public sealed class AppSettings
             8);
         MotionZoneSamplingMilliseconds = Math.Clamp(
             MotionZoneSamplingMilliseconds,
-            40,
+            20,
             250);
         MotionZonePixelThreshold = Math.Clamp(
             MotionZonePixelThreshold,
@@ -231,14 +235,30 @@ public sealed class AppSettings
             MotionZonePaddingCells,
             0,
             6);
+        MotionZoneMinimumMotionCells = Math.Clamp(
+            MotionZoneMinimumMotionCells,
+            1,
+            100);
+        MotionZoneRenderMergeGapCells = Math.Clamp(
+            MotionZoneRenderMergeGapCells,
+            0,
+            12);
+        MotionZoneSceneChangeFraction = Math.Clamp(
+            MotionZoneSceneChangeFraction,
+            0.01,
+            0.80);
+        MotionZoneSceneChangeOverlapFraction = Math.Clamp(
+            MotionZoneSceneChangeOverlapFraction,
+            0.0,
+            1.0);
         MotionZoneOneShotHoldMilliseconds = Math.Clamp(
             MotionZoneOneShotHoldMilliseconds,
-            60,
+            100,
             60000);
         MotionZoneRecurringWindowMilliseconds = Math.Clamp(
             MotionZoneRecurringWindowMilliseconds,
             300,
-            5000);
+            10000);
         MotionZoneRecurringMinimumSpanMilliseconds = Math.Clamp(
             MotionZoneRecurringMinimumSpanMilliseconds,
             80,
@@ -263,26 +283,6 @@ public sealed class AppSettings
             MotionZoneTrackingGapCells,
             0,
             20);
-        MotionZoneSnakeMinimumDistanceCells = Math.Clamp(
-            MotionZoneSnakeMinimumDistanceCells,
-            2,
-            80);
-        MotionZoneSnakeDurationMilliseconds = Math.Clamp(
-            MotionZoneSnakeDurationMilliseconds,
-            120,
-            3000);
-        MotionZoneSnakeTailCells = Math.Clamp(
-            MotionZoneSnakeTailCells,
-            3,
-            100);
-        MotionZoneSnakeThicknessCells = Math.Clamp(
-            MotionZoneSnakeThicknessCells,
-            0,
-            4);
-        MotionZoneSnakeRevealStrength = Math.Clamp(
-            MotionZoneSnakeRevealStrength,
-            0.1,
-            1.0);
 
         MouseRevealRadiusPixels = Math.Clamp(MouseRevealRadiusPixels, 0, 200);
         MouseFeatherRadiusPixels = Math.Clamp(MouseFeatherRadiusPixels, 1, 240);

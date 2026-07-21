@@ -10,7 +10,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>OledGuard</AssemblyName>
     <RootNamespace>OledGuard</RootNamespace>
-    <Version>4.5.0</Version>
+    <Version>4.6.0</Version>
     <Product>OledGuard</Product>
     <Description>Assombrissement propre des zones réellement statiques pour écrans OLED.</Description>
     <Authors>OledGuard contributors</Authors>
