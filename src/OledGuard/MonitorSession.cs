@@ -763,7 +763,8 @@ internal sealed class MonitorSession : IDisposable
                      _trackedRegions)
             {
                 if (tracked.LastHitCaptureTicks ==
-                    now)
+                        now &&
+                    !tracked.Recurring)
                 {
                     continue;
                 }
@@ -845,16 +846,20 @@ internal sealed class MonitorSession : IDisposable
                 continue;
             }
 
-            // The block follows the currently detected activity immediately.
-            // There is no animated shrink and no per-cell fade.
-            best.MinimumRow =
-                detected.MinimumRow;
-            best.MaximumRow =
-                detected.MaximumRow;
-            best.MinimumColumn =
-                detected.MinimumColumn;
-            best.MaximumColumn =
-                detected.MaximumColumn;
+            // Preserve the complete active region. A smaller moving fragment
+            // refreshes the existing rectangle but can never shrink it.
+            best.MinimumRow = Math.Min(
+                best.MinimumRow,
+                detected.MinimumRow);
+            best.MaximumRow = Math.Max(
+                best.MaximumRow,
+                detected.MaximumRow);
+            best.MinimumColumn = Math.Min(
+                best.MinimumColumn,
+                detected.MinimumColumn);
+            best.MaximumColumn = Math.Max(
+                best.MaximumColumn,
+                detected.MaximumColumn);
             best.LastMotionTicks = now;
             best.LastHitCaptureTicks = now;
 
@@ -1103,8 +1108,8 @@ internal sealed class MonitorSession : IDisposable
             bounds.Height /
             (double)_rows;
         var radiusPixels = Math.Max(
-            12,
-            _settings.MouseRevealRadiusPixels);
+            4,
+            _settings.MouseHoverRadiusPixels);
         var halfColumns = Math.Max(
             1,
             (int)Math.Ceiling(
@@ -1280,8 +1285,8 @@ internal sealed class MonitorSession : IDisposable
             bounds.Height /
             (double)_rows;
         var radiusPixels = Math.Max(
-            12,
-            _settings.MouseRevealRadiusPixels);
+            4,
+            _settings.MouseHoverRadiusPixels);
         var halfColumns = Math.Max(
             1,
             (int)Math.Ceiling(
@@ -1314,59 +1319,6 @@ internal sealed class MonitorSession : IDisposable
                     region.MinimumColumn,
                     region.MaximumColumn,
                     0));
-        }
-
-        var gap =
-            _settings.MotionZoneRenderMergeGapCells;
-        var merged = true;
-
-        while (merged)
-        {
-            merged = false;
-
-            for (var firstIndex = 0;
-                 firstIndex <
-                    _visibleRectangles.Count;
-                 firstIndex++)
-            {
-                for (var secondIndex =
-                         firstIndex + 1;
-                     secondIndex <
-                        _visibleRectangles.Count;
-                     secondIndex++)
-                {
-                    var first =
-                        _visibleRectangles[firstIndex];
-                    var second =
-                        _visibleRectangles[secondIndex];
-
-                    if (!RectanglesNear(
-                            first.MinimumRow,
-                            first.MaximumRow,
-                            first.MinimumColumn,
-                            first.MaximumColumn,
-                            second.MinimumRow,
-                            second.MaximumRow,
-                            second.MinimumColumn,
-                            second.MaximumColumn,
-                            gap))
-                    {
-                        continue;
-                    }
-
-                    _visibleRectangles[firstIndex] =
-                        Union(first, second);
-                    _visibleRectangles.RemoveAt(
-                        secondIndex);
-                    merged = true;
-                    break;
-                }
-
-                if (merged)
-                {
-                    break;
-                }
-            }
         }
     }
 
