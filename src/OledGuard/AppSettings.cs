@@ -5,7 +5,7 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 36;
+    public const int CurrentSchemaVersion = 37;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
@@ -55,7 +55,9 @@ public sealed class AppSettings
     public double MotionZoneChangedFraction { get; set; } = 0.08;
     public int MotionZoneMergeRadiusCells { get; set; } = 1;
     public int MotionZonePaddingCells { get; set; } = 1;
-    public int MotionZoneMinimumMotionCells { get; set; } = 2;
+    public int MotionZoneMinimumMotionCells { get; set; } = 3;
+    public int MotionZoneMinimumVisibleAreaCells { get; set; } = 6;
+    public int MotionZoneThinRegionMinimumAreaCells { get; set; } = 12;
     public int MotionZoneRenderMergeGapCells { get; set; } = 2;
     public double MotionZoneSceneChangeFraction { get; set; } = 0.06;
     public double MotionZoneSceneChangeOverlapFraction { get; set; } = 0.60;
@@ -174,11 +176,25 @@ public sealed class AppSettings
             MouseRevealHoldMilliseconds = 3000;
         }
 
+        if (SchemaVersion < 37)
+        {
+            MotionZoneMinimumMotionCells = 3;
+            MotionZoneMinimumVisibleAreaCells = 6;
+            MotionZoneThinRegionMinimumAreaCells = 12;
+        }
+
         SchemaVersion = CurrentSchemaVersion;
     }
 
     public void Normalize()
     {
+        if (SchemaVersion < 37)
+        {
+            MotionZoneMinimumMotionCells = 3;
+            MotionZoneMinimumVisibleAreaCells = 6;
+            MotionZoneThinRegionMinimumAreaCells = 12;
+        }
+
         SchemaVersion = CurrentSchemaVersion;
         DetectionCellSizePixels = Math.Clamp(DetectionCellSizePixels, 32, 160);
         SamplesPerCell = Math.Clamp(SamplesPerCell, 2, 8);
@@ -239,6 +255,14 @@ public sealed class AppSettings
             MotionZoneMinimumMotionCells,
             1,
             100);
+        MotionZoneMinimumVisibleAreaCells = Math.Clamp(
+            MotionZoneMinimumVisibleAreaCells,
+            1,
+            500);
+        MotionZoneThinRegionMinimumAreaCells = Math.Clamp(
+            MotionZoneThinRegionMinimumAreaCells,
+            MotionZoneMinimumVisibleAreaCells,
+            1000);
         MotionZoneRenderMergeGapCells = Math.Clamp(
             MotionZoneRenderMergeGapCells,
             0,
