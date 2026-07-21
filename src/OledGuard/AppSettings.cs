@@ -5,7 +5,7 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 37;
+    public const int CurrentSchemaVersion = 38;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
@@ -58,6 +58,8 @@ public sealed class AppSettings
     public int MotionZoneMinimumMotionCells { get; set; } = 3;
     public int MotionZoneMinimumVisibleAreaCells { get; set; } = 6;
     public int MotionZoneThinRegionMinimumAreaCells { get; set; } = 12;
+    public int MotionZoneGeometryRefreshMilliseconds { get; set; } = 700;
+    public int MotionZoneSceneSettleMilliseconds { get; set; } = 180;
     public int MotionZoneRenderMergeGapCells { get; set; } = 2;
     public double MotionZoneSceneChangeFraction { get; set; } = 0.06;
     public double MotionZoneSceneChangeOverlapFraction { get; set; } = 0.60;
@@ -75,7 +77,7 @@ public sealed class AppSettings
     public int MouseFeatherRadiusPixels { get; set; } = 72;
     public int MouseRevealHoldMilliseconds { get; set; } = 3_000;
     public int MouseStrokeIdleMilliseconds { get; set; } = 650;
-    public int MouseHoverRadiusPixels { get; set; } = 8;
+    public int MouseHoverRadiusPixels { get; set; } = 18;
     public int MouseHoverRefreshMilliseconds { get; set; } = 500;
     public int MouseRevealFadeMilliseconds { get; set; } = 140;
     public int MouseReturnFadeMilliseconds { get; set; } = 5_000;
@@ -183,6 +185,13 @@ public sealed class AppSettings
             MotionZoneThinRegionMinimumAreaCells = 12;
         }
 
+        if (SchemaVersion < 38)
+        {
+            MotionZoneGeometryRefreshMilliseconds = 700;
+            MotionZoneSceneSettleMilliseconds = 180;
+            MouseHoverRadiusPixels = 18;
+        }
+
         SchemaVersion = CurrentSchemaVersion;
     }
 
@@ -193,6 +202,13 @@ public sealed class AppSettings
             MotionZoneMinimumMotionCells = 3;
             MotionZoneMinimumVisibleAreaCells = 6;
             MotionZoneThinRegionMinimumAreaCells = 12;
+        }
+
+        if (SchemaVersion < 38)
+        {
+            MotionZoneGeometryRefreshMilliseconds = 700;
+            MotionZoneSceneSettleMilliseconds = 180;
+            MouseHoverRadiusPixels = 18;
         }
 
         SchemaVersion = CurrentSchemaVersion;
@@ -262,6 +278,14 @@ public sealed class AppSettings
         MotionZoneThinRegionMinimumAreaCells = Math.Clamp(
             MotionZoneThinRegionMinimumAreaCells,
             MotionZoneMinimumVisibleAreaCells,
+            1000);
+        MotionZoneGeometryRefreshMilliseconds = Math.Clamp(
+            MotionZoneGeometryRefreshMilliseconds,
+            200,
+            3000);
+        MotionZoneSceneSettleMilliseconds = Math.Clamp(
+            MotionZoneSceneSettleMilliseconds,
+            50,
             1000);
         MotionZoneRenderMergeGapCells = Math.Clamp(
             MotionZoneRenderMergeGapCells,

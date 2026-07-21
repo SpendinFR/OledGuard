@@ -31,6 +31,14 @@ internal sealed class MonitorSession : IDisposable
         public long LastHitCaptureTicks;
         public int MotionHits;
         public bool Recurring;
+
+        public long GeometryWindowStartTicks;
+        public bool HasRecentBounds;
+        public int RecentMinimumRow;
+        public int RecentMaximumRow;
+        public int RecentMinimumColumn;
+        public int RecentMaximumColumn;
+        public int RecentDetectionCount;
     }
 
     private readonly FormsScreen _screen;
@@ -70,6 +78,7 @@ internal sealed class MonitorSession : IDisposable
     private long _nextMouseExpiryTicks;
     private IntPtr _lastForegroundWindow;
     private string _lastForegroundTitle = string.Empty;
+    private long _sceneSettleUntilTicks;
     private int _lastCursorX = int.MinValue;
     private int _lastCursorY = int.MinValue;
 
@@ -164,6 +173,7 @@ internal sealed class MonitorSession : IDisposable
             _nextMouseExpiryTicks = 0;
             _lastForegroundWindow = IntPtr.Zero;
             _lastForegroundTitle = string.Empty;
+            _sceneSettleUntilTicks = 0;
             _lastCursorX = int.MinValue;
             _lastCursorY = int.MinValue;
             _hasMouseGridPosition = false;
@@ -270,24 +280,12 @@ internal sealed class MonitorSession : IDisposable
 
             if (!_hasPrevious)
             {
-                Buffer.BlockCopy(
+                SetCaptureBaseline(
                     current,
-                    0,
-                    _previousFrame,
-                    0,
-                    current.Length);
-                _hasPrevious = true;
-                _lastForegroundWindow =
-                    foregroundWindow;
-                _lastForegroundTitle =
-                    foregroundTitle;
+                    foregroundWindow,
+                    foregroundTitle);
                 return;
             }
-
-            DetectMotion(current);
-            ExpandMotion();
-            BuildDetectedRegions();
-            MergeNearbyDetectedRegions();
 
             var foregroundChanged =
                 foregroundWindow != IntPtr.Zero &&
@@ -304,40 +302,105 @@ internal sealed class MonitorSession : IDisposable
                     _lastForegroundTitle,
                     StringComparison.Ordinal);
 
-            if (foregroundWindow != IntPtr.Zero)
+            UpdateForegroundIdentity(
+                foregroundWindow,
+                foregroundTitle);
+
+            if (foregroundChanged ||
+                titleChanged)
             {
-                _lastForegroundWindow =
-                    foregroundWindow;
+                ResetSceneToBaseline(
+                    current,
+                    now);
+                return;
             }
 
-            if (!string.IsNullOrWhiteSpace(
-                    foregroundTitle))
+            if (_sceneSettleUntilTicks != 0 &&
+                now < _sceneSettleUntilTicks)
             {
-                _lastForegroundTitle =
-                    foregroundTitle;
+                CopyCurrentToPrevious(current);
+                _maskDirty = true;
+                return;
             }
 
-            var sceneChanged =
-                foregroundChanged ||
-                titleChanged ||
-                IsLargeSceneChange();
+            _sceneSettleUntilTicks = 0;
 
-            if (sceneChanged)
+            DetectMotion(current);
+            ExpandMotion();
+            BuildDetectedRegions();
+            MergeNearbyDetectedRegions();
+
+            if (IsLargeSceneChange())
             {
-                _trackedRegions.Clear();
+                ResetSceneToBaseline(
+                    current,
+                    now);
+                return;
             }
 
             UpdateTrackedRegions(now);
-
-            Buffer.BlockCopy(
-                current,
-                0,
-                _previousFrame,
-                0,
-                current.Length);
-
+            CopyCurrentToPrevious(current);
             _maskDirty = true;
         }
+    }
+
+    private void SetCaptureBaseline(
+        byte[] current,
+        IntPtr foregroundWindow,
+        string foregroundTitle)
+    {
+        CopyCurrentToPrevious(current);
+        _hasPrevious = true;
+        _lastForegroundWindow =
+            foregroundWindow;
+        _lastForegroundTitle =
+            foregroundTitle;
+    }
+
+    private void UpdateForegroundIdentity(
+        IntPtr foregroundWindow,
+        string foregroundTitle)
+    {
+        if (foregroundWindow != IntPtr.Zero)
+        {
+            _lastForegroundWindow =
+                foregroundWindow;
+        }
+
+        if (!string.IsNullOrWhiteSpace(
+                foregroundTitle))
+        {
+            _lastForegroundTitle =
+                foregroundTitle;
+        }
+    }
+
+    private void ResetSceneToBaseline(
+        byte[] current,
+        long now)
+    {
+        _trackedRegions.Clear();
+        _detectedRegions.Clear();
+        _visibleRectangles.Clear();
+
+        _sceneSettleUntilTicks =
+            now +
+            ToStopwatchTicks(
+                _settings.MotionZoneSceneSettleMilliseconds);
+
+        CopyCurrentToPrevious(current);
+        _maskDirty = true;
+    }
+
+    private void CopyCurrentToPrevious(
+        byte[] current)
+    {
+        Buffer.BlockCopy(
+            current,
+            0,
+            _previousFrame,
+            0,
+            current.Length);
     }
 
     private void DetectMotion(byte[] current)
@@ -733,7 +796,7 @@ internal sealed class MonitorSession : IDisposable
 
         if (_trackedRegions.Count == 0)
         {
-            return true;
+            return false;
         }
 
         var overlapFraction =
@@ -774,6 +837,9 @@ internal sealed class MonitorSession : IDisposable
         var recurringWindowTicks =
             ToStopwatchTicks(
                 _settings.MotionZoneRecurringWindowMilliseconds);
+        var geometryRefreshTicks =
+            ToStopwatchTicks(
+                _settings.MotionZoneGeometryRefreshMilliseconds);
         var trackingGap =
             _settings.MotionZoneTrackingGapCells;
 
@@ -783,50 +849,6 @@ internal sealed class MonitorSession : IDisposable
             var detectedArea = Math.Max(
                 1,
                 detected.Area);
-            TrackedRegion? containingActive = null;
-            var bestContainment = 0.0;
-
-            foreach (var tracked in
-                     _trackedRegions)
-            {
-                if (!tracked.Recurring)
-                {
-                    continue;
-                }
-
-                var intersection =
-                    IntersectionArea(
-                        tracked.MinimumRow,
-                        tracked.MaximumRow,
-                        tracked.MinimumColumn,
-                        tracked.MaximumColumn,
-                        detected.MinimumRow,
-                        detected.MaximumRow,
-                        detected.MinimumColumn,
-                        detected.MaximumColumn);
-                var containment =
-                    intersection /
-                    (double)detectedArea;
-
-                if (containment >= 0.70 &&
-                    containment >
-                        bestContainment)
-                {
-                    containingActive = tracked;
-                    bestContainment =
-                        containment;
-                }
-            }
-
-            if (containingActive is not null)
-            {
-                RefreshTrackedRegion(
-                    containingActive,
-                    now,
-                    recurringWindowTicks);
-                continue;
-            }
-
             TrackedRegion? best = null;
             var bestScore = int.MinValue;
 
@@ -834,16 +856,24 @@ internal sealed class MonitorSession : IDisposable
                      _trackedRegions)
             {
                 if (tracked.LastHitCaptureTicks ==
-                    now)
+                        now &&
+                    !tracked.Recurring)
                 {
                     continue;
                 }
 
+                GetEffectiveBounds(
+                    tracked,
+                    out var trackedMinimumRow,
+                    out var trackedMaximumRow,
+                    out var trackedMinimumColumn,
+                    out var trackedMaximumColumn);
+
                 if (!RectanglesNear(
-                        tracked.MinimumRow,
-                        tracked.MaximumRow,
-                        tracked.MinimumColumn,
-                        tracked.MaximumColumn,
+                        trackedMinimumRow,
+                        trackedMaximumRow,
+                        trackedMinimumColumn,
+                        trackedMaximumColumn,
                         detected.MinimumRow,
                         detected.MaximumRow,
                         detected.MinimumColumn,
@@ -856,16 +886,16 @@ internal sealed class MonitorSession : IDisposable
                 var trackedArea = Math.Max(
                     1,
                     RectangleArea(
-                        tracked.MinimumRow,
-                        tracked.MaximumRow,
-                        tracked.MinimumColumn,
-                        tracked.MaximumColumn));
+                        trackedMinimumRow,
+                        trackedMaximumRow,
+                        trackedMinimumColumn,
+                        trackedMaximumColumn));
                 var intersection =
                     IntersectionArea(
-                        tracked.MinimumRow,
-                        tracked.MaximumRow,
-                        tracked.MinimumColumn,
-                        tracked.MaximumColumn,
+                        trackedMinimumRow,
+                        trackedMaximumRow,
+                        trackedMinimumColumn,
+                        trackedMaximumColumn,
                         detected.MinimumRow,
                         detected.MaximumRow,
                         detected.MinimumColumn,
@@ -873,6 +903,9 @@ internal sealed class MonitorSession : IDisposable
                 var detectedInside =
                     intersection /
                     (double)detectedArea;
+                var trackedInside =
+                    intersection /
+                    (double)trackedArea;
                 var sizeRatio =
                     Math.Min(
                         trackedArea,
@@ -880,38 +913,33 @@ internal sealed class MonitorSession : IDisposable
                     (double)Math.Max(
                         trackedArea,
                         detectedArea);
-
-                // A small appendage beside a large active region must remain a
-                // separate region so it can darken independently.
-                if (tracked.Recurring &&
-                    detectedArea <
-                        trackedArea * 0.35 &&
-                    detectedInside < 0.70)
-                {
-                    continue;
-                }
-
-                if (intersection == 0 &&
-                    sizeRatio < 0.30)
-                {
-                    continue;
-                }
-
                 var distance =
                     AxisGap(
-                        tracked.MinimumRow,
-                        tracked.MaximumRow,
+                        trackedMinimumRow,
+                        trackedMaximumRow,
                         detected.MinimumRow,
                         detected.MaximumRow) +
                     AxisGap(
-                        tracked.MinimumColumn,
-                        tracked.MaximumColumn,
+                        trackedMinimumColumn,
+                        trackedMaximumColumn,
                         detected.MinimumColumn,
                         detected.MaximumColumn);
+
+                if (intersection == 0 &&
+                    distance > trackingGap / 2 &&
+                    sizeRatio < 0.35)
+                {
+                    continue;
+                }
+
                 var score =
                     intersection * 1000 +
                     (int)Math.Round(
-                        sizeRatio * 100.0) -
+                        detectedInside * 300.0) +
+                    (int)Math.Round(
+                        trackedInside * 120.0) +
+                    (int)Math.Round(
+                        sizeRatio * 80.0) -
                     distance * 25;
 
                 if (score > bestScore)
@@ -923,7 +951,7 @@ internal sealed class MonitorSession : IDisposable
 
             if (best is null)
             {
-                _trackedRegions.Add(
+                var created =
                     new TrackedRegion
                     {
                         MinimumRow =
@@ -938,64 +966,134 @@ internal sealed class MonitorSession : IDisposable
                         LastMotionTicks = now,
                         LastHitCaptureTicks = now,
                         MotionHits = 1,
-                        Recurring = false
-                    });
+                        Recurring = false,
+                        GeometryWindowStartTicks = now
+                    };
+
+                AccumulateRecentBounds(
+                    created,
+                    detected);
+                _trackedRegions.Add(created);
                 continue;
             }
 
-            var bestArea = Math.Max(
-                1,
-                RectangleArea(
-                    best.MinimumRow,
-                    best.MaximumRow,
-                    best.MinimumColumn,
-                    best.MaximumColumn));
-            var bestIntersection =
-                IntersectionArea(
-                    best.MinimumRow,
-                    best.MaximumRow,
-                    best.MinimumColumn,
-                    best.MaximumColumn,
-                    detected.MinimumRow,
-                    detected.MaximumRow,
-                    detected.MinimumColumn,
-                    detected.MaximumColumn);
-            var overlapOfBest =
-                bestIntersection /
-                (double)bestArea;
-            var overlapOfDetected =
-                bestIntersection /
-                (double)detectedArea;
-            var comparableSize =
-                Math.Min(
-                    bestArea,
-                    detectedArea) /
-                (double)Math.Max(
-                    bestArea,
-                    detectedArea) >= 0.45;
-
-            if (comparableSize ||
-                overlapOfBest >= 0.25 ||
-                overlapOfDetected >= 0.60)
-            {
-                best.MinimumRow = Math.Min(
-                    best.MinimumRow,
-                    detected.MinimumRow);
-                best.MaximumRow = Math.Max(
-                    best.MaximumRow,
-                    detected.MaximumRow);
-                best.MinimumColumn = Math.Min(
-                    best.MinimumColumn,
-                    detected.MinimumColumn);
-                best.MaximumColumn = Math.Max(
-                    best.MaximumColumn,
-                    detected.MaximumColumn);
-            }
-
+            AccumulateRecentBounds(
+                best,
+                detected);
             RefreshTrackedRegion(
                 best,
                 now,
                 recurringWindowTicks);
+        }
+
+        CommitRecentGeometry(
+            now,
+            geometryRefreshTicks);
+    }
+
+    private static void GetEffectiveBounds(
+        TrackedRegion region,
+        out int minimumRow,
+        out int maximumRow,
+        out int minimumColumn,
+        out int maximumColumn)
+    {
+        minimumRow = region.MinimumRow;
+        maximumRow = region.MaximumRow;
+        minimumColumn =
+            region.MinimumColumn;
+        maximumColumn =
+            region.MaximumColumn;
+
+        if (!region.HasRecentBounds)
+        {
+            return;
+        }
+
+        minimumRow = Math.Min(
+            minimumRow,
+            region.RecentMinimumRow);
+        maximumRow = Math.Max(
+            maximumRow,
+            region.RecentMaximumRow);
+        minimumColumn = Math.Min(
+            minimumColumn,
+            region.RecentMinimumColumn);
+        maximumColumn = Math.Max(
+            maximumColumn,
+            region.RecentMaximumColumn);
+    }
+
+    private static void AccumulateRecentBounds(
+        TrackedRegion region,
+        DetectedRegion detected)
+    {
+        if (!region.HasRecentBounds)
+        {
+            region.RecentMinimumRow =
+                detected.MinimumRow;
+            region.RecentMaximumRow =
+                detected.MaximumRow;
+            region.RecentMinimumColumn =
+                detected.MinimumColumn;
+            region.RecentMaximumColumn =
+                detected.MaximumColumn;
+            region.HasRecentBounds = true;
+            region.RecentDetectionCount = 1;
+            return;
+        }
+
+        region.RecentMinimumRow = Math.Min(
+            region.RecentMinimumRow,
+            detected.MinimumRow);
+        region.RecentMaximumRow = Math.Max(
+            region.RecentMaximumRow,
+            detected.MaximumRow);
+        region.RecentMinimumColumn = Math.Min(
+            region.RecentMinimumColumn,
+            detected.MinimumColumn);
+        region.RecentMaximumColumn = Math.Max(
+            region.RecentMaximumColumn,
+            detected.MaximumColumn);
+        region.RecentDetectionCount++;
+    }
+
+    private void CommitRecentGeometry(
+        long now,
+        long geometryRefreshTicks)
+    {
+        foreach (var region in
+                 _trackedRegions)
+        {
+            if (region.GeometryWindowStartTicks == 0)
+            {
+                region.GeometryWindowStartTicks =
+                    now;
+            }
+
+            if (now -
+                region.GeometryWindowStartTicks <
+                geometryRefreshTicks)
+            {
+                continue;
+            }
+
+            if (region.HasRecentBounds)
+            {
+                region.MinimumRow =
+                    region.RecentMinimumRow;
+                region.MaximumRow =
+                    region.RecentMaximumRow;
+                region.MinimumColumn =
+                    region.RecentMinimumColumn;
+                region.MaximumColumn =
+                    region.RecentMaximumColumn;
+            }
+
+            region.HasRecentBounds = false;
+            region.RecentDetectionCount = 0;
+            region.GeometryWindowStartTicks =
+                now;
         }
     }
 
