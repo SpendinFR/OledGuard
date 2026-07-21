@@ -5,7 +5,7 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 32;
+    public const int CurrentSchemaVersion = 33;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
@@ -45,6 +45,15 @@ public sealed class AppSettings
     // A location already protected in the current session may return quickly
     // after its local content stops moving. New locations keep the full delay.
     public int PreviouslyDimmedReapplySeconds { get; set; } = 8;
+
+    // Experimental inverted active-ink engine.
+    public int ActiveInkCaptureWidth { get; set; } = 1920;
+    public int ActiveInkSamplingMilliseconds { get; set; } = 80;
+    public int ActiveInkMotionThreshold { get; set; } = 10;
+    public int ActiveInkEdgeThreshold { get; set; } = 12;
+    public int ActiveInkActivityRadius { get; set; } = 3;
+    public int ActiveInkInkRadius { get; set; } = 2;
+    public int ActiveInkHoldMilliseconds { get; set; } = 700;
 
     // Mouse engine copied from build 3 (v0.5.0 / e1ddf1ed).
     public int MouseRevealRadiusPixels { get; set; } = 40;
@@ -103,6 +112,18 @@ public sealed class AppSettings
         }
 
         PreviouslyDimmedReapplySeconds = 8;
+
+        if (SchemaVersion < 33)
+        {
+            ActiveInkCaptureWidth = 1920;
+            ActiveInkSamplingMilliseconds = 80;
+            ActiveInkMotionThreshold = 10;
+            ActiveInkEdgeThreshold = 12;
+            ActiveInkActivityRadius = 3;
+            ActiveInkInkRadius = 2;
+            ActiveInkHoldMilliseconds = 700;
+        }
+
         SchemaVersion = CurrentSchemaVersion;
     }
 
@@ -135,6 +156,35 @@ public sealed class AppSettings
             PreviouslyDimmedReapplySeconds,
             2,
             120);
+
+        ActiveInkCaptureWidth = Math.Clamp(
+            ActiveInkCaptureWidth,
+            640,
+            2560);
+        ActiveInkSamplingMilliseconds = Math.Clamp(
+            ActiveInkSamplingMilliseconds,
+            40,
+            250);
+        ActiveInkMotionThreshold = Math.Clamp(
+            ActiveInkMotionThreshold,
+            3,
+            80);
+        ActiveInkEdgeThreshold = Math.Clamp(
+            ActiveInkEdgeThreshold,
+            3,
+            80);
+        ActiveInkActivityRadius = Math.Clamp(
+            ActiveInkActivityRadius,
+            0,
+            12);
+        ActiveInkInkRadius = Math.Clamp(
+            ActiveInkInkRadius,
+            0,
+            8);
+        ActiveInkHoldMilliseconds = Math.Clamp(
+            ActiveInkHoldMilliseconds,
+            100,
+            5000);
 
         MouseRevealRadiusPixels = Math.Clamp(MouseRevealRadiusPixels, 0, 200);
         MouseFeatherRadiusPixels = Math.Clamp(MouseFeatherRadiusPixels, 1, 240);
