@@ -68,6 +68,8 @@ internal sealed class MonitorSession : IDisposable
     private long _revealAllUntilTicks;
     private long _nextMouseExpiryTicks;
     private IntPtr _lastForegroundWindow;
+    private int _lastCursorX = int.MinValue;
+    private int _lastCursorY = int.MinValue;
 
     private bool _hasMouseGridPosition;
     private int _lastMouseRow;
@@ -159,6 +161,8 @@ internal sealed class MonitorSession : IDisposable
             _revealAllUntilTicks = 0;
             _nextMouseExpiryTicks = 0;
             _lastForegroundWindow = IntPtr.Zero;
+            _lastCursorX = int.MinValue;
+            _lastCursorY = int.MinValue;
             _hasMouseGridPosition = false;
 
             _detectedRegions.Clear();
@@ -714,7 +718,9 @@ internal sealed class MonitorSession : IDisposable
         // active block. A real page/window replacement changes mostly outside
         // the old block and therefore clears it immediately.
         return overlapFraction <
-            _settings.MotionZoneSceneChangeOverlapFraction;
+            Math.Min(
+                _settings.MotionZoneSceneChangeOverlapFraction,
+                0.20);
     }
 
     private bool IsCellInsideTrackedRegion(
@@ -857,23 +863,18 @@ internal sealed class MonitorSession : IDisposable
                     recurringWindowTicks)
             {
                 best.WindowStartTicks = now;
-                best.MotionHits = 1;
-                best.Recurring = false;
+                best.MotionHits = 2;
             }
             else
             {
                 best.MotionHits = Math.Min(
                     int.MaxValue,
                     best.MotionHits + 1);
-
-                if (best.MotionHits >=
-                        _settings.MotionZoneRecurringHits &&
-                    now - best.WindowStartTicks >=
-                        recurringMinimumSpanTicks)
-                {
-                    best.Recurring = true;
-                }
             }
+
+            // This region has been detected on at least two captures.
+            // It is active now, independently of the old timing classifier.
+            best.Recurring = true;
         }
     }
 
@@ -917,6 +918,8 @@ internal sealed class MonitorSession : IDisposable
         EventArgs e)
     {
         var now = Stopwatch.GetTimestamp();
+        NativeMethods.GetCursorPos(
+            out var cursor);
         var shouldPush = false;
 
         lock (_sync)
@@ -926,10 +929,9 @@ internal sealed class MonitorSession : IDisposable
                 return;
             }
 
-            var mouseChanged =
-                UpdateMouseTrail(now);
-            var mouseExpired =
-                RemoveExpiredMouseCells(now);
+            var cursorChanged =
+                cursor.X != _lastCursorX ||
+                cursor.Y != _lastCursorY;
             var regionExpired =
                 RemoveExpiredRegions(now);
             var revealAllExpired =
@@ -943,11 +945,12 @@ internal sealed class MonitorSession : IDisposable
 
             shouldPush =
                 _maskDirty ||
-                mouseChanged ||
-                mouseExpired ||
+                cursorChanged ||
                 regionExpired ||
                 revealAllExpired;
 
+            _lastCursorX = cursor.X;
+            _lastCursorY = cursor.Y;
             _maskDirty = false;
         }
 
@@ -1231,17 +1234,7 @@ internal sealed class MonitorSession : IDisposable
                         rectangle.MaximumColumn);
                 }
 
-                for (var index = 0;
-                     index <
-                        _mouseRevealUntilTicks.Length;
-                     index++)
-                {
-                    if (_mouseRevealUntilTicks[index] >
-                        now)
-                    {
-                        _renderAlpha[index] = 0f;
-                    }
-                }
+                ApplyCurrentMouseBlockReveal();
             }
         }
 
@@ -1249,6 +1242,62 @@ internal sealed class MonitorSession : IDisposable
             _renderAlpha,
             _columns,
             _rows);
+    }
+
+    private void ApplyCurrentMouseBlockReveal()
+    {
+        if (!NativeMethods.GetCursorPos(
+                out var cursor))
+        {
+            return;
+        }
+
+        var bounds = _screen.Bounds;
+
+        if (!bounds.Contains(
+                cursor.X,
+                cursor.Y))
+        {
+            return;
+        }
+
+        var centerColumn = Math.Clamp(
+            (cursor.X - bounds.Left) *
+            _columns /
+            Math.Max(1, bounds.Width),
+            0,
+            _columns - 1);
+        var centerRow = Math.Clamp(
+            (cursor.Y - bounds.Top) *
+            _rows /
+            Math.Max(1, bounds.Height),
+            0,
+            _rows - 1);
+        var cellWidth =
+            bounds.Width /
+            (double)_columns;
+        var cellHeight =
+            bounds.Height /
+            (double)_rows;
+        var radiusPixels = Math.Max(
+            12,
+            _settings.MouseRevealRadiusPixels);
+        var halfColumns = Math.Max(
+            1,
+            (int)Math.Ceiling(
+                radiusPixels /
+                Math.Max(1.0, cellWidth)));
+        var halfRows = Math.Max(
+            1,
+            (int)Math.Ceiling(
+                radiusPixels /
+                Math.Max(1.0, cellHeight)));
+
+        SetRectangleClear(
+            centerRow - halfRows,
+            centerRow + halfRows,
+            centerColumn - halfColumns,
+            centerColumn + halfColumns);
     }
 
     private void BuildVisibleRectangles()
