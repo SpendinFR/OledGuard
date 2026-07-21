@@ -11,11 +11,7 @@ internal sealed class MonitorSession : IDisposable
         int MaximumRow,
         int MinimumColumn,
         int MaximumColumn,
-        int MotionCells)
-    {
-        public int CenterRow => (MinimumRow + MaximumRow) / 2;
-        public int CenterColumn => (MinimumColumn + MaximumColumn) / 2;
-    }
+        int MotionCells);
 
     private sealed class TrackedRegion
     {
@@ -30,9 +26,8 @@ internal sealed class MonitorSession : IDisposable
         public int MotionHits;
         public int MotionCellsThisCapture;
         public float Reveal;
-
-        public int CenterRow => (MinimumRow + MaximumRow) / 2;
-        public int CenterColumn => (MinimumColumn + MaximumColumn) / 2;
+        public bool ClosingAnimation;
+        public long ClosingAnimationStartTicks;
     }
 
     private readonly FormsScreen _screen;
@@ -73,18 +68,8 @@ internal sealed class MonitorSession : IDisposable
     private bool _lastRevealAll;
     private int _nextRegionId = 1;
 
-    private int _primaryRegionId;
-    private int _pendingPrimaryRegionId;
-    private int _pendingPrimaryHits;
-    private int _lastPrimaryRow;
-    private int _lastPrimaryColumn;
-
-    private bool _snakeActive;
-    private int _snakeStartRow;
-    private int _snakeStartColumn;
-    private int _snakeEndRow;
-    private int _snakeEndColumn;
-    private long _snakeStartTicks;
+    private bool _startupAnimationActive;
+    private long _startupAnimationStartTicks;
 
     public MonitorSession(FormsScreen screen, AppSettings settings)
     {
@@ -154,6 +139,8 @@ internal sealed class MonitorSession : IDisposable
 
     public void SetEnabled(bool enabled)
     {
+        var showLaunchText = false;
+
         lock (_sync)
         {
             _enabled = enabled;
@@ -168,24 +155,26 @@ internal sealed class MonitorSession : IDisposable
             _detectedRegions.Clear();
             _trackedRegions.Clear();
 
-            _primaryRegionId = 0;
-            _pendingPrimaryRegionId = 0;
-            _pendingPrimaryHits = 0;
-            _lastPrimaryRow = 0;
-            _lastPrimaryColumn = 0;
-            _snakeActive = false;
-            _snakeStartTicks = 0;
-
             Array.Clear(_previousFrame, 0, _previousFrame.Length);
             Array.Clear(_rawMotion, 0, _rawMotion.Length);
             Array.Clear(_expandedMotion, 0, _expandedMotion.Length);
             Array.Clear(_visited, 0, _visited.Length);
 
             var now = Stopwatch.GetTimestamp();
-            _revealAllUntilTicks = enabled
-                ? now + ToStopwatchTicks(750)
-                : now;
+            _revealAllUntilTicks = now;
+
+            _startupAnimationActive =
+                enabled &&
+                _settings.BlockWaveStartupEnabled;
+            _startupAnimationStartTicks = now;
+            showLaunchText = _startupAnimationActive;
         }
+
+        _overlay.SetStatusText(
+            showLaunchText
+                ? _settings.BlockWaveStartupText
+                : string.Empty,
+            showLaunchText ? 1.0 : 0.0);
 
         PushMask();
     }
@@ -263,7 +252,6 @@ internal sealed class MonitorSession : IDisposable
             ExpandMotion();
             BuildDetectedRegions();
             UpdateTrackedRegions(now);
-            UpdatePrimaryRegionAndSnake(now);
 
             Buffer.BlockCopy(
                 current,
@@ -621,6 +609,7 @@ internal sealed class MonitorSession : IDisposable
             best.LastHitCaptureTicks = now;
             best.MotionCellsThisCapture =
                 detected.MotionCells;
+            best.ClosingAnimation = false;
 
             if (best.WindowStartTicks == 0 ||
                 now - best.WindowStartTicks >
@@ -638,87 +627,6 @@ internal sealed class MonitorSession : IDisposable
         }
     }
 
-    private void UpdatePrimaryRegionAndSnake(long now)
-    {
-        TrackedRegion? candidate = null;
-
-        foreach (var tracked in _trackedRegions)
-        {
-            if (tracked.LastHitCaptureTicks != now ||
-                tracked.MotionCellsThisCapture <= 0)
-            {
-                continue;
-            }
-
-            if (candidate is null ||
-                tracked.MotionCellsThisCapture >
-                    candidate.MotionCellsThisCapture)
-            {
-                candidate = tracked;
-            }
-        }
-
-        if (candidate is null)
-        {
-            _pendingPrimaryRegionId = 0;
-            _pendingPrimaryHits = 0;
-            return;
-        }
-
-        if (_primaryRegionId == 0)
-        {
-            _primaryRegionId = candidate.Id;
-            _lastPrimaryRow = candidate.CenterRow;
-            _lastPrimaryColumn = candidate.CenterColumn;
-            return;
-        }
-
-        if (candidate.Id == _primaryRegionId)
-        {
-            _pendingPrimaryRegionId = 0;
-            _pendingPrimaryHits = 0;
-            _lastPrimaryRow = candidate.CenterRow;
-            _lastPrimaryColumn = candidate.CenterColumn;
-            return;
-        }
-
-        if (_pendingPrimaryRegionId != candidate.Id)
-        {
-            _pendingPrimaryRegionId = candidate.Id;
-            _pendingPrimaryHits = 1;
-            return;
-        }
-
-        _pendingPrimaryHits++;
-
-        if (_pendingPrimaryHits < 2)
-        {
-            return;
-        }
-
-        var distance = Math.Max(
-            Math.Abs(candidate.CenterRow - _lastPrimaryRow),
-            Math.Abs(candidate.CenterColumn -
-                     _lastPrimaryColumn));
-
-        if (distance >=
-            _settings.MotionZoneSnakeMinimumDistanceCells)
-        {
-            _snakeStartRow = _lastPrimaryRow;
-            _snakeStartColumn = _lastPrimaryColumn;
-            _snakeEndRow = candidate.CenterRow;
-            _snakeEndColumn = candidate.CenterColumn;
-            _snakeStartTicks = now;
-            _snakeActive = true;
-        }
-
-        _primaryRegionId = candidate.Id;
-        _lastPrimaryRow = candidate.CenterRow;
-        _lastPrimaryColumn = candidate.CenterColumn;
-        _pendingPrimaryRegionId = 0;
-        _pendingPrimaryHits = 0;
-    }
-
     private bool UpdateTrackedRegionReveal(
         long now,
         double elapsedMilliseconds)
@@ -726,12 +634,12 @@ internal sealed class MonitorSession : IDisposable
         var changed = false;
         var oneShotHoldTicks = ToStopwatchTicks(
             _settings.MotionZoneOneShotHoldMilliseconds);
-        var recurringWindowTicks = ToStopwatchTicks(
-            _settings.MotionZoneRecurringWindowMilliseconds);
         var recurringMinimumSpanTicks = ToStopwatchTicks(
             _settings.MotionZoneRecurringMinimumSpanMilliseconds);
         var recurringHoldTicks = ToStopwatchTicks(
             _settings.MotionZoneRecurringHoldMilliseconds);
+        var closeDurationTicks = ToStopwatchTicks(
+            _settings.BlockWaveRegionCloseDurationMilliseconds);
 
         for (var index = _trackedRegions.Count - 1;
              index >= 0;
@@ -750,66 +658,64 @@ internal sealed class MonitorSession : IDisposable
             var oneShot =
                 now - region.LastMotionTicks <=
                     oneShotHoldTicks;
-            var target =
-                recurring || oneShot
-                    ? 1f
-                    : 0f;
+            var targetVisible = recurring || oneShot;
 
-            var duration =
-                target > region.Reveal
-                    ? _settings
-                        .MotionZoneRevealFadeMilliseconds
-                    : _settings
-                        .MotionZoneReturnFadeMilliseconds;
-            var step =
-                duration <= 0
-                    ? 1f
-                    : (float)(
-                        elapsedMilliseconds /
-                        duration);
-            var next =
-                target > region.Reveal
-                    ? Math.Min(
-                        target,
-                        region.Reveal + step)
-                    : Math.Max(
-                        target,
-                        region.Reveal - step);
-
-            if (Math.Abs(next - region.Reveal) >
-                0.0005f)
+            if (targetVisible)
             {
-                region.Reveal = next;
+                region.ClosingAnimation = false;
+
+                var step = (float)(
+                    elapsedMilliseconds /
+                    Math.Max(
+                        1,
+                        _settings.MotionZoneRevealFadeMilliseconds));
+                var next = Math.Min(
+                    1f,
+                    region.Reveal + step);
+
+                if (Math.Abs(next - region.Reveal) >
+                    0.0005f)
+                {
+                    region.Reveal = next;
+                    changed = true;
+                }
+
+                continue;
+            }
+
+            if (!region.ClosingAnimation &&
+                region.Reveal > 0.001f)
+            {
+                region.ClosingAnimation = true;
+                region.ClosingAnimationStartTicks = now;
+                region.Reveal = 1f;
                 changed = true;
             }
 
-            if (region.WindowStartTicks > 0 &&
-                now - region.WindowStartTicks >
-                    recurringWindowTicks &&
-                now - region.LastMotionTicks >
-                    recurringWindowTicks)
+            if (region.ClosingAnimation)
             {
-                region.WindowStartTicks = 0;
-                region.MotionHits = 0;
+                if (now - region.ClosingAnimationStartTicks >=
+                    closeDurationTicks)
+                {
+                    region.ClosingAnimation = false;
+                    region.Reveal = 0f;
+                    changed = true;
+                }
+
+                continue;
             }
 
-            var staleTicks = Math.Max(
-                oneShotHoldTicks,
-                recurringHoldTicks) +
-                ToStopwatchTicks(
-                    _settings.MotionZoneReturnFadeMilliseconds +
-                    1000);
+            var staleTicks =
+                Math.Max(
+                    oneShotHoldTicks,
+                    recurringHoldTicks) +
+                closeDurationTicks +
+                ToStopwatchTicks(1000);
 
-            if (target <= 0f &&
-                region.Reveal <= 0.001f &&
+            if (region.Reveal <= 0.001f &&
                 now - region.LastMotionTicks >
                     staleTicks)
             {
-                if (_primaryRegionId == region.Id)
-                {
-                    _primaryRegionId = 0;
-                }
-
                 _trackedRegions.RemoveAt(index);
                 changed = true;
             }
@@ -843,14 +749,18 @@ internal sealed class MonitorSession : IDisposable
             var cursorChanged =
                 cursor.X != _lastCursorX ||
                 cursor.Y != _lastCursorY;
-            var snakeAnimating =
-                IsSnakeAnimating(now);
+            var startupAnimating =
+                IsStartupAnimating(now);
+            var closingAnimating =
+                _trackedRegions.Any(
+                    region => region.ClosingAnimation);
 
             shouldPush =
                 changed ||
                 _maskDirty ||
                 cursorChanged ||
-                snakeAnimating ||
+                startupAnimating ||
+                closingAnimating ||
                 revealAll != _lastRevealAll;
 
             _maskDirty = false;
@@ -867,12 +777,17 @@ internal sealed class MonitorSession : IDisposable
 
     private void PushMask()
     {
+        string statusText = string.Empty;
+        double statusOpacity = 0.0;
+
         lock (_sync)
         {
             var now = Stopwatch.GetTimestamp();
             var revealAll =
                 !_enabled ||
                 now < _revealAllUntilTicks;
+            var maximumOpacity =
+                (float)_settings.MaximumMaskOpacity;
 
             if (revealAll)
             {
@@ -881,17 +796,32 @@ internal sealed class MonitorSession : IDisposable
                     0,
                     _renderAlpha.Length);
             }
+            else if (IsStartupAnimating(now))
+            {
+                ApplyStartupBlockWave(
+                    now,
+                    maximumOpacity,
+                    out statusOpacity);
+                statusText =
+                    _settings.BlockWaveStartupText;
+            }
             else
             {
-                var maximumOpacity =
-                    (float)_settings.MaximumMaskOpacity;
-
                 Array.Fill(
                     _renderAlpha,
                     maximumOpacity);
 
                 foreach (var region in _trackedRegions)
                 {
+                    if (region.ClosingAnimation)
+                    {
+                        ApplyRegionCloseBlockWave(
+                            region,
+                            now,
+                            maximumOpacity);
+                        continue;
+                    }
+
                     if (region.Reveal <= 0.001f)
                     {
                         continue;
@@ -909,111 +839,203 @@ internal sealed class MonitorSession : IDisposable
                         alpha);
                 }
 
-                ApplySnakeReveal(now, maximumOpacity);
                 ApplyCurrentMouseBlockReveal();
             }
         }
 
+        _overlay.SetStatusText(
+            statusText,
+            statusOpacity);
         _overlay.SetMask(
             _renderAlpha,
             _columns,
             _rows);
     }
 
-    private void ApplySnakeReveal(
+    private void ApplyStartupBlockWave(
+        long now,
+        float maximumOpacity,
+        out double textOpacity)
+    {
+        var duration = Math.Max(
+            200,
+            _settings.BlockWaveStartupDurationMilliseconds);
+        var progress = Math.Clamp(
+            FromStopwatchTicks(
+                now - _startupAnimationStartTicks) /
+                duration,
+            0.0,
+            1.0);
+        var blockCells = Math.Max(
+            1,
+            _settings.BlockWaveStartupBlockCells);
+        var gradientBlocks = Math.Max(
+            1,
+            _settings.BlockWaveStartupGradientBlocks);
+        var blockColumns = Math.Max(
+            1,
+            (int)Math.Ceiling(
+                _columns /
+                (double)blockCells));
+        var blockRows = Math.Max(
+            1,
+            (int)Math.Ceiling(
+                _rows /
+                (double)blockCells));
+        var maximumOrder = Math.Max(
+            1.0,
+            blockColumns - 1 +
+            (blockRows - 1) * 0.72);
+        var band =
+            gradientBlocks /
+            maximumOrder;
+
+        for (var row = 0; row < _rows; row++)
+        {
+            var blockRow = row / blockCells;
+
+            for (var column = 0;
+                 column < _columns;
+                 column++)
+            {
+                var blockColumn =
+                    column / blockCells;
+                var orderedColumn =
+                    blockRow % 2 == 0
+                        ? blockColumn
+                        : blockColumns -
+                          1 -
+                          blockColumn;
+                var order =
+                    (orderedColumn +
+                     blockRow * 0.72) /
+                    maximumOrder;
+                var local =
+                    (progress * (1.0 + band) -
+                     order) /
+                    band;
+                var darkAmount =
+                    SmoothStep01(local);
+
+                _renderAlpha[
+                    row * _columns +
+                    column] =
+                    maximumOpacity *
+                    (float)darkAmount;
+            }
+        }
+
+        if (progress < 0.18)
+        {
+            textOpacity =
+                SmoothStep01(
+                    progress / 0.18);
+        }
+        else if (progress < 0.72)
+        {
+            textOpacity = 1.0;
+        }
+        else
+        {
+            textOpacity =
+                1.0 -
+                SmoothStep01(
+                    (progress - 0.72) /
+                    0.28);
+        }
+    }
+
+    private void ApplyRegionCloseBlockWave(
+        TrackedRegion region,
         long now,
         float maximumOpacity)
     {
-        if (!_snakeActive)
-        {
-            return;
-        }
-
         var duration = Math.Max(
             100,
-            _settings.MotionZoneSnakeDurationMilliseconds);
-        var elapsed = FromStopwatchTicks(
-            now - _snakeStartTicks);
+            _settings.BlockWaveRegionCloseDurationMilliseconds);
         var progress = Math.Clamp(
-            elapsed / duration,
+            FromStopwatchTicks(
+                now -
+                region.ClosingAnimationStartTicks) /
+                duration,
             0.0,
             1.0);
+        var blockCells = Math.Max(
+            1,
+            _settings.BlockWaveRegionCloseBlockCells);
+        var gradientBlocks = Math.Max(
+            1,
+            _settings.BlockWaveRegionCloseGradientBlocks);
+        var regionColumns =
+            region.MaximumColumn -
+            region.MinimumColumn +
+            1;
+        var regionRows =
+            region.MaximumRow -
+            region.MinimumRow +
+            1;
+        var blockColumns = Math.Max(
+            1,
+            (int)Math.Ceiling(
+                regionColumns /
+                (double)blockCells));
+        var blockRows = Math.Max(
+            1,
+            (int)Math.Ceiling(
+                regionRows /
+                (double)blockCells));
+        var maximumOrder = Math.Max(
+            1.0,
+            blockColumns - 1 +
+            (blockRows - 1) * 0.65);
+        var band =
+            gradientBlocks /
+            maximumOrder;
 
-        var deltaRow = _snakeEndRow - _snakeStartRow;
-        var deltaColumn =
-            _snakeEndColumn - _snakeStartColumn;
-        var pathSteps = Math.Max(
-            Math.Abs(deltaRow),
-            Math.Abs(deltaColumn));
-
-        if (pathSteps <= 0)
+        for (var row = region.MinimumRow;
+             row <= region.MaximumRow;
+             row++)
         {
-            _snakeActive = false;
-            return;
-        }
+            var localRow =
+                row - region.MinimumRow;
+            var blockRow =
+                localRow / blockCells;
 
-        var tailLength = Math.Max(
-            3,
-            _settings.MotionZoneSnakeTailCells);
-        var travellingDistance =
-            pathSteps + tailLength;
-        var headPosition =
-            progress * travellingDistance;
-        var firstStep = Math.Max(
-            0,
-            (int)Math.Floor(
-                headPosition - tailLength));
-        var lastStep = Math.Min(
-            pathSteps,
-            (int)Math.Ceiling(headPosition));
-
-        for (var step = firstStep;
-             step <= lastStep;
-             step++)
-        {
-            var distanceBehindHead =
-                headPosition - step;
-
-            if (distanceBehindHead < 0 ||
-                distanceBehindHead > tailLength)
+            for (var column = region.MinimumColumn;
+                 column <= region.MaximumColumn;
+                 column++)
             {
-                continue;
+                var localColumn =
+                    column - region.MinimumColumn;
+                var blockColumn =
+                    localColumn / blockCells;
+                var orderedColumn =
+                    blockRow % 2 == 0
+                        ? blockColumn
+                        : blockColumns -
+                          1 -
+                          blockColumn;
+                var order =
+                    (orderedColumn +
+                     blockRow * 0.65) /
+                    maximumOrder;
+                var local =
+                    (progress * (1.0 + band) -
+                     order) /
+                    band;
+                var darkAmount =
+                    SmoothStep01(local);
+                var alpha =
+                    maximumOpacity *
+                    (float)darkAmount;
+
+                var index =
+                    row * _columns +
+                    column;
+                _renderAlpha[index] = Math.Min(
+                    _renderAlpha[index],
+                    alpha);
             }
-
-            var pathAmount =
-                step / (double)pathSteps;
-            var row = (int)Math.Round(
-                _snakeStartRow +
-                deltaRow * pathAmount);
-            var column = (int)Math.Round(
-                _snakeStartColumn +
-                deltaColumn * pathAmount);
-            var tailAmount =
-                1.0 -
-                distanceBehindHead / tailLength;
-            var revealStrength =
-                (float)(
-                    _settings
-                        .MotionZoneSnakeRevealStrength *
-                    tailAmount);
-            var alpha =
-                maximumOpacity *
-                (1f - revealStrength);
-            var thickness =
-                _settings
-                    .MotionZoneSnakeThicknessCells;
-
-            FillRectangleWithMinimumAlpha(
-                row - thickness,
-                row + thickness,
-                column - thickness,
-                column + thickness,
-                alpha);
-        }
-
-        if (progress >= 1.0)
-        {
-            _snakeActive = false;
         }
     }
 
@@ -1101,7 +1123,9 @@ internal sealed class MonitorSession : IDisposable
                  column <= maximumColumn;
                  column++)
             {
-                var index = row * _columns + column;
+                var index =
+                    row * _columns +
+                    column;
                 _renderAlpha[index] = Math.Min(
                     _renderAlpha[index],
                     alpha);
@@ -1109,25 +1133,37 @@ internal sealed class MonitorSession : IDisposable
         }
     }
 
-    private bool IsSnakeAnimating(long now)
+    private bool IsStartupAnimating(long now)
     {
-        if (!_snakeActive)
+        if (!_startupAnimationActive)
         {
             return false;
         }
 
         var duration = Math.Max(
-            100,
-            _settings.MotionZoneSnakeDurationMilliseconds);
+            200,
+            _settings.BlockWaveStartupDurationMilliseconds);
 
         if (FromStopwatchTicks(
-                now - _snakeStartTicks) >= duration)
+                now - _startupAnimationStartTicks) >=
+            duration)
         {
-            _snakeActive = false;
+            _startupAnimationActive = false;
             return false;
         }
 
         return true;
+    }
+
+    private static double SmoothStep01(double value)
+    {
+        var clamped = Math.Clamp(
+            value,
+            0.0,
+            1.0);
+        return clamped *
+               clamped *
+               (3.0 - 2.0 * clamped);
     }
 
     private static int FollowMinimumBoundary(
@@ -1162,12 +1198,16 @@ internal sealed class MonitorSession : IDisposable
     {
         if (firstMaximum < secondMinimum)
         {
-            return secondMinimum - firstMaximum - 1;
+            return secondMinimum -
+                   firstMaximum -
+                   1;
         }
 
         if (secondMaximum < firstMinimum)
         {
-            return firstMinimum - secondMaximum - 1;
+            return firstMinimum -
+                   secondMaximum -
+                   1;
         }
 
         return 0;

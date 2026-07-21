@@ -5,7 +5,7 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 34;
+    public const int CurrentSchemaVersion = 35;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
@@ -63,11 +63,15 @@ public sealed class AppSettings
     public int MotionZoneRevealFadeMilliseconds { get; set; } = 20;
     public int MotionZoneReturnFadeMilliseconds { get; set; } = 500;
     public int MotionZoneTrackingGapCells { get; set; } = 8;
-    public int MotionZoneSnakeMinimumDistanceCells { get; set; } = 12;
-    public int MotionZoneSnakeDurationMilliseconds { get; set; } = 520;
-    public int MotionZoneSnakeTailCells { get; set; } = 18;
-    public int MotionZoneSnakeThicknessCells { get; set; } = 1;
-    public double MotionZoneSnakeRevealStrength { get; set; } = 0.72;
+    // Futuristic block-wave animations.
+    public bool BlockWaveStartupEnabled { get; set; } = true;
+    public int BlockWaveStartupDurationMilliseconds { get; set; } = 1600;
+    public int BlockWaveStartupBlockCells { get; set; } = 8;
+    public int BlockWaveStartupGradientBlocks { get; set; } = 7;
+    public string BlockWaveStartupText { get; set; } = "LANCEMENT OLEDGUARD";
+    public int BlockWaveRegionCloseDurationMilliseconds { get; set; } = 650;
+    public int BlockWaveRegionCloseBlockCells { get; set; } = 4;
+    public int BlockWaveRegionCloseGradientBlocks { get; set; } = 5;
 
     // Mouse engine copied from build 3 (v0.5.0 / e1ddf1ed).
     public int MouseRevealRadiusPixels { get; set; } = 40;
@@ -162,11 +166,39 @@ public sealed class AppSettings
             MotionZoneSnakeRevealStrength = 0.72;
         }
 
+        if (SchemaVersion < 35)
+        {
+            MotionZoneOneShotHoldMilliseconds = 1200;
+            MotionZoneRecurringHoldMilliseconds = 2500;
+            BlockWaveStartupEnabled = true;
+            BlockWaveStartupDurationMilliseconds = 1600;
+            BlockWaveStartupBlockCells = 8;
+            BlockWaveStartupGradientBlocks = 7;
+            BlockWaveStartupText = "LANCEMENT OLEDGUARD";
+            BlockWaveRegionCloseDurationMilliseconds = 650;
+            BlockWaveRegionCloseBlockCells = 4;
+            BlockWaveRegionCloseGradientBlocks = 5;
+        }
+
         SchemaVersion = CurrentSchemaVersion;
     }
 
     public void Normalize()
     {
+        if (SchemaVersion < 35)
+        {
+            MotionZoneOneShotHoldMilliseconds = 1200;
+            MotionZoneRecurringHoldMilliseconds = 2500;
+            BlockWaveStartupEnabled = true;
+            BlockWaveStartupDurationMilliseconds = 1600;
+            BlockWaveStartupBlockCells = 8;
+            BlockWaveStartupGradientBlocks = 7;
+            BlockWaveStartupText = "LANCEMENT OLEDGUARD";
+            BlockWaveRegionCloseDurationMilliseconds = 650;
+            BlockWaveRegionCloseBlockCells = 4;
+            BlockWaveRegionCloseGradientBlocks = 5;
+        }
+
         SchemaVersion = CurrentSchemaVersion;
         DetectionCellSizePixels = Math.Clamp(DetectionCellSizePixels, 32, 160);
         SamplesPerCell = Math.Clamp(SamplesPerCell, 2, 8);
@@ -255,26 +287,34 @@ public sealed class AppSettings
             MotionZoneTrackingGapCells,
             0,
             20);
-        MotionZoneSnakeMinimumDistanceCells = Math.Clamp(
-            MotionZoneSnakeMinimumDistanceCells,
+        BlockWaveStartupDurationMilliseconds = Math.Clamp(
+            BlockWaveStartupDurationMilliseconds,
+            300,
+            5000);
+        BlockWaveStartupBlockCells = Math.Clamp(
+            BlockWaveStartupBlockCells,
             2,
-            80);
-        MotionZoneSnakeDurationMilliseconds = Math.Clamp(
-            MotionZoneSnakeDurationMilliseconds,
+            32);
+        BlockWaveStartupGradientBlocks = Math.Clamp(
+            BlockWaveStartupGradientBlocks,
+            1,
+            30);
+        BlockWaveStartupText =
+            string.IsNullOrWhiteSpace(BlockWaveStartupText)
+                ? "LANCEMENT OLEDGUARD"
+                : BlockWaveStartupText.Trim();
+        BlockWaveRegionCloseDurationMilliseconds = Math.Clamp(
+            BlockWaveRegionCloseDurationMilliseconds,
             120,
             3000);
-        MotionZoneSnakeTailCells = Math.Clamp(
-            MotionZoneSnakeTailCells,
-            3,
-            100);
-        MotionZoneSnakeThicknessCells = Math.Clamp(
-            MotionZoneSnakeThicknessCells,
-            0,
-            4);
-        MotionZoneSnakeRevealStrength = Math.Clamp(
-            MotionZoneSnakeRevealStrength,
-            0.1,
-            1.0);
+        BlockWaveRegionCloseBlockCells = Math.Clamp(
+            BlockWaveRegionCloseBlockCells,
+            1,
+            24);
+        BlockWaveRegionCloseGradientBlocks = Math.Clamp(
+            BlockWaveRegionCloseGradientBlocks,
+            1,
+            20);
 
         MouseRevealRadiusPixels = Math.Clamp(MouseRevealRadiusPixels, 0, 200);
         MouseFeatherRadiusPixels = Math.Clamp(MouseFeatherRadiusPixels, 1, 240);
