@@ -159,11 +159,6 @@ public sealed class AppSettings
             MotionZoneRevealFadeMilliseconds = 20;
             MotionZoneReturnFadeMilliseconds = 500;
             MotionZoneTrackingGapCells = 8;
-            MotionZoneSnakeMinimumDistanceCells = 12;
-            MotionZoneSnakeDurationMilliseconds = 520;
-            MotionZoneSnakeTailCells = 18;
-            MotionZoneSnakeThicknessCells = 1;
-            MotionZoneSnakeRevealStrength = 0.72;
         }
 
         if (SchemaVersion < 35)

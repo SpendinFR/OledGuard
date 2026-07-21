@@ -23,18 +23,30 @@ internal sealed class OverlayWindow : Window
         _statusText = new TextBlock
         {
             Text = string.Empty,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = new SolidColorBrush(
-                Color.FromRgb(115, 230, 255)),
-            FontFamily = new FontFamily("Segoe UI Variable Display"),
+            HorizontalAlignment =
+                System.Windows.HorizontalAlignment.Center,
+            VerticalAlignment =
+                System.Windows.VerticalAlignment.Center,
+            Foreground =
+                new System.Windows.Media.SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(
+                        115,
+                        230,
+                        255)),
+            FontFamily =
+                new System.Windows.Media.FontFamily(
+                    "Segoe UI Variable Display"),
             FontSize = 34,
             FontWeight = FontWeights.SemiBold,
             Opacity = 0,
             IsHitTestVisible = false,
             Effect = new DropShadowEffect
             {
-                Color = Color.FromRgb(70, 205, 255),
+                Color =
+                    System.Windows.Media.Color.FromRgb(
+                        70,
+                        205,
+                        255),
                 BlurRadius = 18,
                 ShadowDepth = 0,
                 Opacity = 0.9
@@ -48,7 +60,8 @@ internal sealed class OverlayWindow : Window
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
         AllowsTransparency = true;
-        Background = Brushes.Transparent;
+        Background =
+            System.Windows.Media.Brushes.Transparent;
         ShowInTaskbar = false;
         ShowActivated = false;
         Topmost = true;
