@@ -55,29 +55,24 @@ public sealed class AppSettings
     public double MotionZoneChangedFraction { get; set; } = 0.08;
     public int MotionZoneMergeRadiusCells { get; set; } = 1;
     public int MotionZonePaddingCells { get; set; } = 1;
-    public int MotionZoneOneShotHoldMilliseconds { get; set; } = 1800;
-    public int MotionZoneRecurringWindowMilliseconds { get; set; } = 3000;
+    public int MotionZoneOneShotHoldMilliseconds { get; set; } = 3000;
+    public int MotionZoneRecurringWindowMilliseconds { get; set; } = 5000;
     public int MotionZoneRecurringMinimumSpanMilliseconds { get; set; } = 180;
     public int MotionZoneRecurringHits { get; set; } = 3;
-    public int MotionZoneRecurringHoldMilliseconds { get; set; } = 5000;
+    public int MotionZoneRecurringHoldMilliseconds { get; set; } = 30000;
     public int MotionZoneRevealFadeMilliseconds { get; set; } = 20;
     public int MotionZoneReturnFadeMilliseconds { get; set; } = 500;
     public int MotionZoneTrackingGapCells { get; set; } = 8;
-
-    // Real separated pixel-square snake. Every row moves left to right,
-    // then the scan continues on the row below.
-    public bool PixelSnakeStartupEnabled { get; set; } = true;
-    public int PixelSnakeStartupDurationMilliseconds { get; set; } = 1900;
-    public int PixelSnakeRegionDurationMilliseconds { get; set; } = 950;
-    public int PixelSnakeBlockCells { get; set; } = 5;
-    public int PixelSnakeGapCells { get; set; } = 1;
-    public int PixelSnakeGradientBlocks { get; set; } = 12;
-    public string PixelSnakeStartupText { get; set; } = "LANCEMENT OLEDGUARD";
+    public int MotionZoneSnakeMinimumDistanceCells { get; set; } = 12;
+    public int MotionZoneSnakeDurationMilliseconds { get; set; } = 520;
+    public int MotionZoneSnakeTailCells { get; set; } = 18;
+    public int MotionZoneSnakeThicknessCells { get; set; } = 1;
+    public double MotionZoneSnakeRevealStrength { get; set; } = 0.72;
 
     // Mouse engine copied from build 3 (v0.5.0 / e1ddf1ed).
     public int MouseRevealRadiusPixels { get; set; } = 40;
     public int MouseFeatherRadiusPixels { get; set; } = 72;
-    public int MouseRevealHoldMilliseconds { get; set; } = 30_000;
+    public int MouseRevealHoldMilliseconds { get; set; } = 3_000;
     public int MouseStrokeIdleMilliseconds { get; set; } = 650;
     public int MouseHoverRadiusPixels { get; set; } = 8;
     public int MouseHoverRefreshMilliseconds { get; set; } = 500;
@@ -160,20 +155,19 @@ public sealed class AppSettings
             MotionZoneRevealFadeMilliseconds = 20;
             MotionZoneReturnFadeMilliseconds = 500;
             MotionZoneTrackingGapCells = 8;
+            MotionZoneSnakeMinimumDistanceCells = 12;
+            MotionZoneSnakeDurationMilliseconds = 520;
+            MotionZoneSnakeTailCells = 18;
+            MotionZoneSnakeThicknessCells = 1;
+            MotionZoneSnakeRevealStrength = 0.72;
         }
 
         if (SchemaVersion < 35)
         {
-            MotionZoneOneShotHoldMilliseconds = 1800;
-            MotionZoneRecurringWindowMilliseconds = 3000;
-            MotionZoneRecurringHoldMilliseconds = 5000;
-            PixelSnakeStartupEnabled = true;
-            PixelSnakeStartupDurationMilliseconds = 1900;
-            PixelSnakeRegionDurationMilliseconds = 950;
-            PixelSnakeBlockCells = 5;
-            PixelSnakeGapCells = 1;
-            PixelSnakeGradientBlocks = 12;
-            PixelSnakeStartupText = "LANCEMENT OLEDGUARD";
+            MotionZoneOneShotHoldMilliseconds = 3000;
+            MotionZoneRecurringWindowMilliseconds = 5000;
+            MotionZoneRecurringHoldMilliseconds = 30000;
+            MouseRevealHoldMilliseconds = 3000;
         }
 
         SchemaVersion = CurrentSchemaVersion;
@@ -240,7 +234,7 @@ public sealed class AppSettings
         MotionZoneOneShotHoldMilliseconds = Math.Clamp(
             MotionZoneOneShotHoldMilliseconds,
             60,
-            2000);
+            60000);
         MotionZoneRecurringWindowMilliseconds = Math.Clamp(
             MotionZoneRecurringWindowMilliseconds,
             300,
@@ -256,7 +250,7 @@ public sealed class AppSettings
         MotionZoneRecurringHoldMilliseconds = Math.Clamp(
             MotionZoneRecurringHoldMilliseconds,
             200,
-            8000);
+            120000);
         MotionZoneRevealFadeMilliseconds = Math.Clamp(
             MotionZoneRevealFadeMilliseconds,
             10,
@@ -269,31 +263,26 @@ public sealed class AppSettings
             MotionZoneTrackingGapCells,
             0,
             20);
-        PixelSnakeStartupDurationMilliseconds = Math.Clamp(
-            PixelSnakeStartupDurationMilliseconds,
-            500,
-            6000);
-        PixelSnakeRegionDurationMilliseconds = Math.Clamp(
-            PixelSnakeRegionDurationMilliseconds,
-            200,
-            4000);
-        PixelSnakeBlockCells = Math.Clamp(
-            PixelSnakeBlockCells,
+        MotionZoneSnakeMinimumDistanceCells = Math.Clamp(
+            MotionZoneSnakeMinimumDistanceCells,
             2,
-            20);
-        PixelSnakeGapCells = Math.Clamp(
-            PixelSnakeGapCells,
+            80);
+        MotionZoneSnakeDurationMilliseconds = Math.Clamp(
+            MotionZoneSnakeDurationMilliseconds,
+            120,
+            3000);
+        MotionZoneSnakeTailCells = Math.Clamp(
+            MotionZoneSnakeTailCells,
+            3,
+            100);
+        MotionZoneSnakeThicknessCells = Math.Clamp(
+            MotionZoneSnakeThicknessCells,
             0,
-            PixelSnakeBlockCells - 1);
-        PixelSnakeGradientBlocks = Math.Clamp(
-            PixelSnakeGradientBlocks,
-            2,
-            50);
-        PixelSnakeStartupText =
-            string.IsNullOrWhiteSpace(
-                PixelSnakeStartupText)
-                ? "LANCEMENT OLEDGUARD"
-                : PixelSnakeStartupText.Trim();
+            4);
+        MotionZoneSnakeRevealStrength = Math.Clamp(
+            MotionZoneSnakeRevealStrength,
+            0.1,
+            1.0);
 
         MouseRevealRadiusPixels = Math.Clamp(MouseRevealRadiusPixels, 0, 200);
         MouseFeatherRadiusPixels = Math.Clamp(MouseFeatherRadiusPixels, 1, 240);

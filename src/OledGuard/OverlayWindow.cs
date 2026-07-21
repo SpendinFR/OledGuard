@@ -1,7 +1,6 @@
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Interop;
-using System.Windows.Media.Effects;
+using System.Windows.Media;
 using FormsScreen = System.Windows.Forms.Screen;
 
 namespace OledGuard;
@@ -10,7 +9,6 @@ internal sealed class OverlayWindow : Window
 {
     private readonly FormsScreen _screen;
     private readonly MaskSurface _surface;
-    private readonly TextBlock _statusText;
     private IntPtr _handle;
     private HwndSource? _source;
 
@@ -19,108 +17,31 @@ internal sealed class OverlayWindow : Window
         _screen = screen;
         _surface = new MaskSurface();
 
-        _statusText = new TextBlock
-        {
-            Text = string.Empty,
-            HorizontalAlignment =
-                System.Windows.HorizontalAlignment.Center,
-            VerticalAlignment =
-                System.Windows.VerticalAlignment.Center,
-            Foreground =
-                new System.Windows.Media.SolidColorBrush(
-                    System.Windows.Media.Color.FromRgb(
-                        105,
-                        225,
-                        255)),
-            FontFamily =
-                new System.Windows.Media.FontFamily(
-                    "Segoe UI Variable Display"),
-            FontSize = 34,
-            FontWeight =
-                System.Windows.FontWeights.SemiBold,
-            Opacity = 0,
-            IsHitTestVisible = false,
-            Effect = new DropShadowEffect
-            {
-                Color =
-                    System.Windows.Media.Color.FromRgb(
-                        45,
-                        195,
-                        255),
-                BlurRadius = 22,
-                ShadowDepth = 0,
-                Opacity = 0.95
-            }
-        };
-
-        var root = new Grid();
-        root.Children.Add(_surface);
-        root.Children.Add(_statusText);
-
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
         AllowsTransparency = true;
-        Background =
-            System.Windows.Media.Brushes.Transparent;
+        Background = System.Windows.Media.Brushes.Transparent;
         ShowInTaskbar = false;
         ShowActivated = false;
         Topmost = true;
         Focusable = false;
         IsHitTestVisible = false;
-        Content = root;
+        Content = _surface;
 
-        SourceInitialized +=
-            OnSourceInitialized;
+        SourceInitialized += OnSourceInitialized;
     }
 
-    public bool ExcludedFromCapture
-    {
-        get;
-        private set;
-    }
+    public bool ExcludedFromCapture { get; private set; }
 
-    public void SetMask(
-        float[] alpha,
-        int columns,
-        int rows)
+    public void SetMask(float[] alpha, int columns, int rows)
     {
         if (!Dispatcher.CheckAccess())
         {
-            Dispatcher.BeginInvoke(
-                new Action(
-                    () => SetMask(
-                        alpha,
-                        columns,
-                        rows)));
+            Dispatcher.BeginInvoke(new Action(() => SetMask(alpha, columns, rows)));
             return;
         }
 
-        _surface.UpdateMask(
-            alpha,
-            columns,
-            rows);
-    }
-
-    public void SetStatusText(
-        string text,
-        double opacity)
-    {
-        if (!Dispatcher.CheckAccess())
-        {
-            Dispatcher.BeginInvoke(
-                new Action(
-                    () => SetStatusText(
-                        text,
-                        opacity)));
-            return;
-        }
-
-        _statusText.Text = text;
-        _statusText.Opacity =
-            Math.Clamp(
-                opacity,
-                0.0,
-                1.0);
+        _surface.UpdateMask(alpha, columns, rows);
     }
 
     public void EnsureVisible()
@@ -133,65 +54,38 @@ internal sealed class OverlayWindow : Window
         PlaceExactly();
     }
 
-    private void OnSourceInitialized(
-        object? sender,
-        EventArgs e)
+    private void OnSourceInitialized(object? sender, EventArgs e)
     {
-        _handle =
-            new WindowInteropHelper(this)
-                .Handle;
-        _source =
-            HwndSource.FromHwnd(_handle);
-        _source?.AddHook(
-            WindowProcedure);
+        _handle = new WindowInteropHelper(this).Handle;
+        _source = HwndSource.FromHwnd(_handle);
+        _source?.AddHook(WindowProcedure);
+        var currentStyle = NativeMethods.GetWindowLongPtr(_handle, NativeMethods.GwlExStyle).ToInt64();
+        var updatedStyle = currentStyle
+            | NativeMethods.WsExTransparent
+            | NativeMethods.WsExToolWindow
+            | NativeMethods.WsExNoActivate;
 
-        var currentStyle =
-            NativeMethods.GetWindowLongPtr(
-                _handle,
-                NativeMethods.GwlExStyle)
-            .ToInt64();
-        var updatedStyle =
-            currentStyle |
-            NativeMethods.WsExTransparent |
-            NativeMethods.WsExToolWindow |
-            NativeMethods.WsExNoActivate;
-
-        NativeMethods.SetWindowLongPtr(
-            _handle,
-            NativeMethods.GwlExStyle,
-            new IntPtr(updatedStyle));
-        ExcludedFromCapture =
-            NativeMethods.SetWindowDisplayAffinity(
-                _handle,
-                NativeMethods.WdaExcludeFromCapture);
+        NativeMethods.SetWindowLongPtr(_handle, NativeMethods.GwlExStyle, new IntPtr(updatedStyle));
+        ExcludedFromCapture = NativeMethods.SetWindowDisplayAffinity(_handle, NativeMethods.WdaExcludeFromCapture);
         PlaceExactly();
     }
 
-    private IntPtr WindowProcedure(
-        IntPtr hwnd,
-        int message,
-        IntPtr wParam,
-        IntPtr lParam,
-        ref bool handled)
+    private IntPtr WindowProcedure(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        if (message ==
-            NativeMethods.WmNcHitTest)
+        if (message == NativeMethods.WmNcHitTest)
         {
             handled = true;
-            return new IntPtr(
-                NativeMethods.HtTransparent);
+            return new IntPtr(NativeMethods.HtTransparent);
         }
 
         return IntPtr.Zero;
     }
 
-    protected override void OnClosed(
-        EventArgs e)
+    protected override void OnClosed(EventArgs e)
     {
         if (_source is not null)
         {
-            _source.RemoveHook(
-                WindowProcedure);
+            _source.RemoveHook(WindowProcedure);
             _source = null;
         }
 
@@ -213,7 +107,6 @@ internal sealed class OverlayWindow : Window
             bounds.Top,
             bounds.Width,
             bounds.Height,
-            NativeMethods.SwpNoActivate |
-            NativeMethods.SwpShowWindow);
+            NativeMethods.SwpNoActivate | NativeMethods.SwpShowWindow);
     }
 }
