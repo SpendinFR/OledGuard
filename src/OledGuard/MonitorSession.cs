@@ -7,7 +7,7 @@ using FormsScreen = System.Windows.Forms.Screen;
 
 namespace OledGuard;
 
-internal sealed class MonitorSession : IDisposable
+internal sealed partial class MonitorSession : IDisposable
 {
     private readonly record struct DetectedRegion(
         int MinimumRow,
@@ -51,6 +51,7 @@ internal sealed class MonitorSession : IDisposable
         public int MotionHits;
         public bool Recurring;
         public int DimStep;
+        public bool IsForegroundIntroduction;
     }
 
     private readonly FormsScreen _screen;
@@ -348,13 +349,19 @@ internal sealed class MonitorSession : IDisposable
                 foregroundWindow,
                 foregroundTitle);
 
-            if (foregroundChanged ||
-                titleChanged)
+            if (foregroundChanged)
             {
                 ResetSceneToBaseline(
                     current,
-                    now);
+                    now,
+                    foregroundWindow,
+                    revealForeground: true);
                 return;
+            }
+
+            if (titleChanged)
+            {
+                _maskDirty = true;
             }
 
             if (_sceneSettleUntilTicks != 0 &&
@@ -376,7 +383,9 @@ internal sealed class MonitorSession : IDisposable
             {
                 ResetSceneToBaseline(
                     current,
-                    now);
+                    now,
+                    foregroundWindow,
+                    revealForeground: true);
                 return;
             }
 
@@ -402,6 +411,11 @@ internal sealed class MonitorSession : IDisposable
             foregroundWindow;
         _lastForegroundTitle =
             foregroundTitle;
+
+        AddForegroundIntroduction(
+            foregroundWindow,
+            Stopwatch.GetTimestamp());
+        _maskDirty = true;
     }
 
     private void UpdateForegroundIdentity(
@@ -425,11 +439,20 @@ internal sealed class MonitorSession : IDisposable
 
     private void ResetSceneToBaseline(
         byte[] current,
-        long now)
+        long now,
+        IntPtr foregroundWindow,
+        bool revealForeground)
     {
         _trackedRegions.Clear();
         _detectedRegions.Clear();
         ResetMouseVisual();
+
+        if (revealForeground)
+        {
+            AddForegroundIntroduction(
+                foregroundWindow,
+                now);
+        }
 
         _sceneSettleUntilTicks =
             now +
@@ -713,7 +736,12 @@ internal sealed class MonitorSession : IDisposable
             }
 
             if (motionCells <
-                minimumMotionCells)
+                minimumMotionCells ||
+                !IsMeaningfulOutputRegion(
+                    minimumRow,
+                    maximumRow,
+                    minimumColumn,
+                    maximumColumn))
             {
                 continue;
             }
@@ -1029,6 +1057,11 @@ internal sealed class MonitorSession : IDisposable
             foreach (var tracked in
                      _trackedRegions)
             {
+                if (tracked.IsForegroundIntroduction)
+                {
+                    continue;
+                }
+
                 // One tracked component may consume only one detected
                 // component per capture. This prevents unrelated details
                 // from being swallowed into one large rectangle.
@@ -1362,10 +1395,22 @@ internal sealed class MonitorSession : IDisposable
             ToStopwatchTicks(
                 _settings
                     .MotionZoneRecurringHoldMilliseconds);
-        var dimDurationTicks =
+        var recurringDimDurationTicks =
             ToStopwatchTicks(
                 _settings
                     .MotionZoneDimDurationMilliseconds);
+        var transientDimDurationTicks =
+            ToStopwatchTicks(
+                _settings
+                    .MotionZoneTransientFadeMilliseconds);
+        var foregroundRevealTicks =
+            ToStopwatchTicks(
+                _settings
+                    .ForegroundWindowRevealMilliseconds);
+        var foregroundFadeTicks =
+            ToStopwatchTicks(
+                _settings
+                    .ForegroundWindowFadeMilliseconds);
         var dimSteps =
             Math.Max(
                 2,
@@ -1380,15 +1425,22 @@ internal sealed class MonitorSession : IDisposable
             var region =
                 _trackedRegions[index];
             var holdTicks =
-                region.Recurring
-                    ? recurringTicks
-                    : oneShotTicks;
+                region.IsForegroundIntroduction
+                    ? foregroundRevealTicks
+                    : region.Recurring
+                        ? recurringTicks
+                        : oneShotTicks;
+            var dimDurationTicks =
+                region.IsForegroundIntroduction
+                    ? foregroundFadeTicks
+                    : region.Recurring
+                        ? recurringDimDurationTicks
+                        : transientDimDurationTicks;
             var elapsed =
                 now -
                 region.LastMotionTicks;
 
-            if (elapsed <
-                holdTicks)
+            if (elapsed < holdTicks)
             {
                 if (region.DimStep != 0)
                 {
@@ -1400,36 +1452,27 @@ internal sealed class MonitorSession : IDisposable
             }
 
             if (dimDurationTicks <= 0 ||
-                elapsed >=
-                    holdTicks +
-                    dimDurationTicks)
+                elapsed >= holdTicks + dimDurationTicks)
             {
-                _trackedRegions.RemoveAt(
-                    index);
+                _trackedRegions.RemoveAt(index);
                 changed = true;
                 continue;
             }
 
-            var fadeElapsed =
-                elapsed -
-                holdTicks;
+            var fadeElapsed = elapsed - holdTicks;
             var targetStep =
                 Math.Clamp(
                     1 +
                     (int)(
                         fadeElapsed *
                         dimSteps /
-                        Math.Max(
-                            1L,
-                            dimDurationTicks)),
+                        Math.Max(1L, dimDurationTicks)),
                     1,
                     dimSteps);
 
-            if (targetStep !=
-                region.DimStep)
+            if (targetStep != region.DimStep)
             {
-                region.DimStep =
-                    targetStep;
+                region.DimStep = targetStep;
                 changed = true;
             }
         }
@@ -1789,9 +1832,11 @@ internal sealed class MonitorSession : IDisposable
 
     private List<MaskRegion> BuildMaskRegions()
     {
+        var renderRegions =
+            BuildMergedRenderRegions();
         var result =
             new List<MaskRegion>(
-                _trackedRegions.Count);
+                renderRegions.Count);
         var dimSteps =
             Math.Max(
                 2,
@@ -1802,7 +1847,7 @@ internal sealed class MonitorSession : IDisposable
                 .MaximumMaskOpacity;
 
         foreach (var region in
-                 _trackedRegions)
+                 renderRegions)
         {
             var left =
                 region.MinimumColumn /

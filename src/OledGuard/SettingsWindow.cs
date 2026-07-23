@@ -193,8 +193,8 @@ internal sealed class SettingsWindow : Window
             AddSlider(
                 form,
                 "Maintien d'un changement bref",
-                1,
-                10,
+                0.2,
+                2.0,
                 settings
                     .MotionZoneOneShotHoldMilliseconds /
                 1000.0,
