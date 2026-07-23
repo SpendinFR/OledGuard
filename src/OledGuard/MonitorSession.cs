@@ -1920,7 +1920,7 @@ internal sealed class MonitorSession : IDisposable
         System.Drawing.Rectangle bounds)
     {
         return new MouseReveal(
-            new Point(
+            new System.Windows.Point(
                 localX /
                 Math.Max(
                     1.0,

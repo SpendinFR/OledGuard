@@ -55,8 +55,8 @@ internal sealed class SettingsWindow : Window
         ResizeMode =
             ResizeMode.CanResize;
         Background =
-            new SolidColorBrush(
-                Color.FromRgb(
+            new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromRgb(
                     245,
                     245,
                     245));
@@ -122,7 +122,7 @@ internal sealed class SettingsWindow : Window
                 TextWrapping =
                     TextWrapping.Wrap,
                 Foreground =
-                    Brushes.DimGray,
+                    System.Windows.Media.Brushes.DimGray,
                 Margin =
                     new Thickness(
                         0,
@@ -288,7 +288,7 @@ internal sealed class SettingsWindow : Window
                 TextWrapping =
                     TextWrapping.Wrap,
                 Foreground =
-                    Brushes.DimGray,
+                    System.Windows.Media.Brushes.DimGray,
                 Margin =
                     new Thickness(
                         0,
@@ -593,7 +593,7 @@ internal sealed class SettingsWindow : Window
             {
                 Text = suffix,
                 Foreground =
-                    Brushes.Gray,
+                    System.Windows.Media.Brushes.Gray,
                 Margin =
                     new Thickness(
                         200,

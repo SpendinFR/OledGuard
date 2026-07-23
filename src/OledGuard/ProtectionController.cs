@@ -152,7 +152,7 @@ public sealed class ProtectionController : IDisposable
         object? sender,
         EventArgs e)
     {
-        Application.Current.Dispatcher.BeginInvoke(
+        System.Windows.Application.Current.Dispatcher.BeginInvoke(
             new Action(
                 RecreateSessions));
     }
