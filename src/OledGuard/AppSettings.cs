@@ -5,7 +5,7 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 44;
+    public const int CurrentSchemaVersion = 45;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
@@ -46,9 +46,9 @@ public sealed class AppSettings
     public int ForegroundWindowFadeMilliseconds { get; set; } = 500;
 
     public bool MouseVisualEnabled { get; set; } = true;
-    public int MouseVisualRadiusPixels { get; set; } = 16;
-    public int MouseTrailMilliseconds { get; set; } = 70;
-    public int MouseTrailSpacingPixels { get; set; } = 7;
+    public int MouseVisualRadiusPixels { get; set; } = 18;
+    public int MouseTrailMilliseconds { get; set; } = 180;
+    public int MouseTrailSpacingPixels { get; set; } = 6;
 
     public AppSettings Clone() =>
         (AppSettings)MemberwiseClone();
@@ -155,6 +155,26 @@ public sealed class AppSettings
             if (MotionZoneDimSteps == 8)
             {
                 MotionZoneDimSteps = 6;
+            }
+        }
+
+        if (SchemaVersion < 45)
+        {
+            // Keep explicit user choices. Only upgrade the old defaults so
+            // the cursor leaves a clearly visible trail on dark areas.
+            if (MouseVisualRadiusPixels == 16)
+            {
+                MouseVisualRadiusPixels = 18;
+            }
+
+            if (MouseTrailMilliseconds == 70)
+            {
+                MouseTrailMilliseconds = 180;
+            }
+
+            if (MouseTrailSpacingPixels == 7)
+            {
+                MouseTrailSpacingPixels = 6;
             }
         }
 

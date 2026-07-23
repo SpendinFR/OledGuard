@@ -36,6 +36,13 @@ internal sealed partial class MonitorSession : IDisposable
         double Y,
         long Timestamp);
 
+    private readonly record struct BoundsObservation(
+        int MinimumRow,
+        int MaximumRow,
+        int MinimumColumn,
+        int MaximumColumn,
+        long Timestamp);
+
     private sealed class TrackedRegion
     {
         public int MinimumRow;
@@ -52,6 +59,9 @@ internal sealed partial class MonitorSession : IDisposable
         public bool Recurring;
         public int DimStep;
         public bool IsForegroundIntroduction;
+
+        public List<BoundsObservation> BoundsHistory { get; } =
+            new();
     }
 
     private readonly FormsScreen _screen;
@@ -1182,7 +1192,7 @@ internal sealed partial class MonitorSession : IDisposable
 
             if (best is null)
             {
-                _trackedRegions.Add(
+                var created =
                     new TrackedRegion
                     {
                         MinimumRow =
@@ -1200,7 +1210,18 @@ internal sealed partial class MonitorSession : IDisposable
                         MotionHits = 1,
                         Recurring = false,
                         DimStep = 0
-                    });
+                    };
+
+                created.BoundsHistory.Add(
+                    new BoundsObservation(
+                        detected.MinimumRow,
+                        detected.MaximumRow,
+                        detected.MinimumColumn,
+                        detected.MaximumColumn,
+                        now));
+
+                _trackedRegions.Add(
+                    created);
 
                 changed = true;
                 continue;
@@ -1217,9 +1238,18 @@ internal sealed partial class MonitorSession : IDisposable
             var oldDimStep =
                 best.DimStep;
 
+            RecordBoundsObservation(
+                best,
+                detected,
+                now);
+
             ExpandStableBounds(
                 best,
                 detected,
+                now);
+
+            ContractStaleBounds(
+                best,
                 now);
 
             RefreshTrackedRegion(
@@ -1243,6 +1273,197 @@ internal sealed partial class MonitorSession : IDisposable
         }
 
         return changed;
+    }
+
+    private void RecordBoundsObservation(
+        TrackedRegion tracked,
+        DetectedRegion detected,
+        long now)
+    {
+        var detectedArea =
+            Math.Max(
+                1,
+                detected.Area);
+        var intersection =
+            IntersectionArea(
+                tracked.MinimumRow,
+                tracked.MaximumRow,
+                tracked.MinimumColumn,
+                tracked.MaximumColumn,
+                detected.MinimumRow,
+                detected.MaximumRow,
+                detected.MinimumColumn,
+                detected.MaximumColumn);
+        var detectedInside =
+            intersection /
+            (double)detectedArea;
+        var expandsBounds =
+            detected.MinimumRow <
+                tracked.MinimumRow ||
+            detected.MaximumRow >
+                tracked.MaximumRow ||
+            detected.MinimumColumn <
+                tracked.MinimumColumn ||
+            detected.MaximumColumn >
+                tracked.MaximumColumn;
+
+        // A hover fragment that the existing protection refuses to absorb
+        // must not pollute the history used for later contraction either.
+        if (tracked.Recurring &&
+            expandsBounds &&
+            detectedInside < 0.85 &&
+            IsCursorNearDetectedRegion(
+                detected,
+                Math.Max(
+                    12,
+                    _settings
+                        .MouseVisualRadiusPixels +
+                    8)))
+        {
+            return;
+        }
+
+        tracked.BoundsHistory.Add(
+            new BoundsObservation(
+                detected.MinimumRow,
+                detected.MaximumRow,
+                detected.MinimumColumn,
+                detected.MaximumColumn,
+                now));
+
+        var cutoff =
+            now -
+            ToStopwatchTicks(
+                1_000);
+
+        while (tracked.BoundsHistory.Count > 0 &&
+               tracked.BoundsHistory[0]
+                       .Timestamp <
+                   cutoff)
+        {
+            tracked.BoundsHistory.RemoveAt(
+                0);
+        }
+
+        if (tracked.BoundsHistory.Count > 64)
+        {
+            tracked.BoundsHistory.RemoveRange(
+                0,
+                tracked.BoundsHistory.Count -
+                64);
+        }
+    }
+
+    private void ContractStaleBounds(
+        TrackedRegion tracked,
+        long now)
+    {
+        if (!tracked.Recurring ||
+            tracked.BoundsHistory.Count < 6)
+        {
+            return;
+        }
+
+        var oldest =
+            tracked.BoundsHistory[0];
+
+        if (now -
+                oldest.Timestamp <
+            ToStopwatchTicks(
+                700))
+        {
+            return;
+        }
+
+        var minimumRow =
+            int.MaxValue;
+        var maximumRow =
+            int.MinValue;
+        var minimumColumn =
+            int.MaxValue;
+        var maximumColumn =
+            int.MinValue;
+
+        foreach (var observation in
+                 tracked.BoundsHistory)
+        {
+            minimumRow =
+                Math.Min(
+                    minimumRow,
+                    observation.MinimumRow);
+            maximumRow =
+                Math.Max(
+                    maximumRow,
+                    observation.MaximumRow);
+            minimumColumn =
+                Math.Min(
+                    minimumColumn,
+                    observation.MinimumColumn);
+            maximumColumn =
+                Math.Max(
+                    maximumColumn,
+                    observation.MaximumColumn);
+        }
+
+        if (minimumRow == int.MaxValue)
+        {
+            return;
+        }
+
+        var currentArea =
+            Math.Max(
+                1,
+                RectangleArea(
+                    tracked.MinimumRow,
+                    tracked.MaximumRow,
+                    tracked.MinimumColumn,
+                    tracked.MaximumColumn));
+        var recentArea =
+            Math.Max(
+                1,
+                RectangleArea(
+                    minimumRow,
+                    maximumRow,
+                    minimumColumn,
+                    maximumColumn));
+        var removesVisibleEdge =
+            minimumRow >=
+                tracked.MinimumRow +
+                2 ||
+            maximumRow <=
+                tracked.MaximumRow -
+                2 ||
+            minimumColumn >=
+                tracked.MinimumColumn +
+                2 ||
+            maximumColumn <=
+                tracked.MaximumColumn -
+                2;
+
+        if (!removesVisibleEdge ||
+            recentArea >
+                currentArea *
+                0.94)
+        {
+            return;
+        }
+
+        tracked.MinimumRow =
+            Math.Max(
+                tracked.MinimumRow,
+                minimumRow);
+        tracked.MaximumRow =
+            Math.Min(
+                tracked.MaximumRow,
+                maximumRow);
+        tracked.MinimumColumn =
+            Math.Max(
+                tracked.MinimumColumn,
+                minimumColumn);
+        tracked.MaximumColumn =
+            Math.Min(
+                tracked.MaximumColumn,
+                maximumColumn);
     }
 
     private void ExpandStableBounds(
@@ -1456,6 +1677,59 @@ internal sealed partial class MonitorSession : IDisposable
         }
     }
 
+    private bool IsCompactTransientRegion(
+        TrackedRegion region)
+    {
+        if (region.IsForegroundIntroduction)
+        {
+            return false;
+        }
+
+        var bounds =
+            _screen.Bounds;
+        var widthPixels =
+            (region.MaximumColumn -
+             region.MinimumColumn +
+             1) *
+            bounds.Width /
+            (double)Math.Max(
+                1,
+                _columns);
+        var heightPixels =
+            (region.MaximumRow -
+             region.MinimumRow +
+             1) *
+            bounds.Height /
+            (double)Math.Max(
+                1,
+                _rows);
+        var areaPixels =
+            widthPixels *
+            heightPixels;
+        var screenArea =
+            Math.Max(
+                1.0,
+                (double)bounds.Width *
+                bounds.Height);
+        var compactLimit =
+            Math.Max(
+                18_000.0,
+                screenArea *
+                0.0125);
+        var thinControl =
+            Math.Min(
+                widthPixels,
+                heightPixels) <=
+                46.0 &&
+            areaPixels <=
+                compactLimit *
+                2.5;
+
+        return areaPixels <=
+                   compactLimit ||
+               thinControl;
+    }
+
     private bool UpdateRegionVisualStates(
         long now)
     {
@@ -1497,16 +1771,20 @@ internal sealed partial class MonitorSession : IDisposable
         {
             var region =
                 _trackedRegions[index];
+            var useRecurringHold =
+                region.Recurring &&
+                !IsCompactTransientRegion(
+                    region);
             var holdTicks =
                 region.IsForegroundIntroduction
                     ? foregroundRevealTicks
-                    : region.Recurring
+                    : useRecurringHold
                         ? recurringTicks
                         : oneShotTicks;
             var dimDurationTicks =
                 region.IsForegroundIntroduction
                     ? foregroundFadeTicks
-                    : region.Recurring
+                    : useRecurringHold
                         ? recurringDimDurationTicks
                         : transientDimDurationTicks;
             var elapsed =
@@ -1758,12 +2036,12 @@ internal sealed partial class MonitorSession : IDisposable
                     timestamp));
         }
 
-        if (_mouseTrail.Count > 40)
+        if (_mouseTrail.Count > 72)
         {
             _mouseTrail.RemoveRange(
                 0,
                 _mouseTrail.Count -
-                40);
+                72);
         }
     }
 
@@ -2016,8 +2294,8 @@ internal sealed partial class MonitorSession : IDisposable
                 (double)lifetimeTicks;
             var radius =
                 baseRadius *
-                (0.25 +
-                 0.55 *
+                (0.35 +
+                 0.65 *
                  life);
 
             result.Add(
