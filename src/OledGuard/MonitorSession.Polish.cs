@@ -188,9 +188,9 @@ internal sealed partial class MonitorSession
             Math.Max(
                 1,
                 (int)Math.Ceiling(
-                    7.0 *
+                    _settings.MotionZoneRenderJoinGapPixels *
                     _rows /
-                    Math.Max(1, bounds.Height)));
+                    (double)Math.Max(1, bounds.Height)));
 
         var merged = true;
 
@@ -241,7 +241,7 @@ internal sealed partial class MonitorSession
         int maximumColumnGap,
         int maximumRowGap)
     {
-        if (first.DimStep != second.DimStep ||
+        if (Math.Abs(first.DimStep - second.DimStep) > 2 ||
             first.IsForegroundIntroduction ||
             second.IsForegroundIntroduction)
         {
@@ -284,12 +284,20 @@ internal sealed partial class MonitorSession
                 1,
                 Math.Min(first.Width, second.Width));
 
+        var overlapping =
+            rowOverlap > 0 &&
+            columnOverlap > 0;
         var horizontallyRelated =
-            horizontalAlignment >= 0.55 &&
+            horizontalAlignment >= 0.48 &&
             columnGap <= maximumColumnGap;
         var verticallyRelated =
-            verticalAlignment >= 0.72 &&
+            verticalAlignment >= 0.62 &&
             rowGap <= maximumRowGap;
+
+        if (overlapping)
+        {
+            return true;
+        }
 
         if (!horizontallyRelated &&
             !verticallyRelated)
@@ -326,7 +334,7 @@ internal sealed partial class MonitorSession
 
         return unionArea <=
             Math.Max(1, occupiedArea) *
-            1.65;
+            1.85;
     }
 
     private static RenderRegionState MergeRenderRegions(
@@ -343,7 +351,7 @@ internal sealed partial class MonitorSession
                 Math.Min(first.MinimumColumn, second.MinimumColumn),
             MaximumColumn =
                 Math.Max(first.MaximumColumn, second.MaximumColumn),
-            DimStep = first.DimStep,
+            DimStep = Math.Min(first.DimStep, second.DimStep),
             IsForegroundIntroduction = false
         };
     }

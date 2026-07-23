@@ -52,6 +52,8 @@ internal sealed partial class MonitorSession : IDisposable
         public bool Recurring;
         public int DimStep;
         public bool IsForegroundIntroduction;
+        public long LastBoundsUpdateTicks;
+        public readonly List<RegionObservation> Observations = new();
     }
 
     private readonly FormsScreen _screen;
@@ -376,6 +378,7 @@ internal sealed partial class MonitorSession : IDisposable
             _sceneSettleUntilTicks = 0;
 
             DetectMotion(current);
+            SuppressCursorInducedMotion();
             BuildDetectedRegions();
             MergeNearbyDetectedRegions();
 
@@ -1045,6 +1048,11 @@ internal sealed partial class MonitorSession : IDisposable
         foreach (var detected in
                  _detectedRegions)
         {
+            if (IsLikelyCursorArtifact(detected))
+            {
+                continue;
+            }
+
             var detectedArea =
                 Math.Max(
                     1,
@@ -1217,7 +1225,7 @@ internal sealed partial class MonitorSession : IDisposable
             var oldDimStep =
                 best.DimStep;
 
-            ExpandStableBounds(
+            UpdateStableBoundsFromHistory(
                 best,
                 detected,
                 now);
@@ -1424,6 +1432,13 @@ internal sealed partial class MonitorSession : IDisposable
         {
             var region =
                 _trackedRegions[index];
+
+            if (!region.IsForegroundIntroduction &&
+                RefreshTrackedBoundsFromHistory(region, now))
+            {
+                changed = true;
+            }
+
             var holdTicks =
                 region.IsForegroundIntroduction
                     ? foregroundRevealTicks

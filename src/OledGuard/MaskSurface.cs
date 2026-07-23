@@ -211,34 +211,47 @@ internal sealed class MaskSurface : FrameworkElement
     private Geometry? CreateRectangleGeometry(
         Rect normalized)
     {
+        const double seamBleed = 1.0;
         var left =
-            Math.Floor(
-                Math.Clamp(
-                    normalized.Left,
-                    0.0,
-                    1.0) *
-                ActualWidth);
+            Math.Max(
+                0.0,
+                Math.Floor(
+                    Math.Clamp(
+                        normalized.Left,
+                        0.0,
+                        1.0) *
+                    ActualWidth) -
+                seamBleed);
         var top =
-            Math.Floor(
-                Math.Clamp(
-                    normalized.Top,
-                    0.0,
-                    1.0) *
-                ActualHeight);
+            Math.Max(
+                0.0,
+                Math.Floor(
+                    Math.Clamp(
+                        normalized.Top,
+                        0.0,
+                        1.0) *
+                    ActualHeight) -
+                seamBleed);
         var right =
-            Math.Ceiling(
-                Math.Clamp(
-                    normalized.Right,
-                    0.0,
-                    1.0) *
-                ActualWidth);
+            Math.Min(
+                ActualWidth,
+                Math.Ceiling(
+                    Math.Clamp(
+                        normalized.Right,
+                        0.0,
+                        1.0) *
+                    ActualWidth) +
+                seamBleed);
         var bottom =
-            Math.Ceiling(
-                Math.Clamp(
-                    normalized.Bottom,
-                    0.0,
-                    1.0) *
-                ActualHeight);
+            Math.Min(
+                ActualHeight,
+                Math.Ceiling(
+                    Math.Clamp(
+                        normalized.Bottom,
+                        0.0,
+                        1.0) *
+                    ActualHeight) +
+                seamBleed);
 
         if (right <= left ||
             bottom <= top)
