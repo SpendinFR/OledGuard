@@ -7,6 +7,6 @@ internal readonly record struct MaskRegion(
     double Opacity);
 
 internal readonly record struct MouseReveal(
-    Point NormalizedPosition,
+    System.Windows.Point NormalizedPosition,
     double NormalizedRadiusX,
     double NormalizedRadiusY);

@@ -277,7 +277,7 @@ internal sealed class MaskSurface : FrameworkElement
         }
 
         return new EllipseGeometry(
-            new Point(
+            new System.Windows.Point(
                 x,
                 y),
             radiusX,
@@ -304,7 +304,7 @@ internal sealed class MaskSurface : FrameworkElement
             addition);
     }
 
-    private static Brush CreateBlackBrush(
+    private static System.Windows.Media.Brush CreateBlackBrush(
         double opacity)
     {
         var brush =
