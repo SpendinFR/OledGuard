@@ -5,7 +5,7 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 43;
+    public const int CurrentSchemaVersion = 44;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
@@ -16,22 +16,17 @@ public sealed class AppSettings
     public int MotionZoneCaptureWidth { get; set; } = 1280;
     public int MotionZoneSamplesPerCell { get; set; } = 4;
     public int MotionZoneSamplingMilliseconds { get; set; } = 20;
-    public int MotionZonePixelThreshold { get; set; } = 10;
+    public int MotionZonePixelThreshold { get; set; } = 8;
     public double MotionZoneChangedFraction { get; set; } = 0.08;
 
     public int MotionZonePaddingCells { get; set; } = 1;
-    public int MotionZoneMinimumMotionCells { get; set; } = 3;
+    public int MotionZoneMinimumMotionCells { get; set; } = 2;
     public int MotionZoneMinimumVisibleAreaCells { get; set; } = 4;
     public int MotionZoneMinimumOutputAreaPixels { get; set; } = 90;
     public int MotionZoneMinimumOutputDimensionPixels { get; set; } = 5;
     public int MotionZoneRenderMergeGapCells { get; set; } = 1;
-    public int MotionZoneRenderJoinGapPixels { get; set; } = 20;
+    public int MotionZoneRenderJoinGapPixels { get; set; } = 18;
     public int MotionZoneTrackingGapCells { get; set; } = 2;
-    public int MotionZoneBoundsMemoryMilliseconds { get; set; } = 1_600;
-    public int MotionZoneBoundsUpdateMilliseconds { get; set; } = 100;
-    public double MotionZoneBoundsOutlierFraction { get; set; } = 0.08;
-    public int MotionZoneCursorSuppressionPixels { get; set; } = 36;
-    public int MotionZoneCursorArtifactAreaPixels { get; set; } = 18_000;
 
     public double MotionZoneSceneChangeFraction { get; set; } = 0.12;
     public double MotionZoneSceneChangeOverlapFraction { get; set; } = 0.35;
@@ -40,12 +35,12 @@ public sealed class AppSettings
     public int MotionZoneOneShotHoldMilliseconds { get; set; } = 500;
     public int MotionZoneTransientFadeMilliseconds { get; set; } = 300;
     public int MotionZoneRecurringWindowMilliseconds { get; set; } = 5_000;
-    public int MotionZoneRecurringMinimumSpanMilliseconds { get; set; } = 900;
-    public int MotionZoneRecurringHits { get; set; } = 6;
+    public int MotionZoneRecurringMinimumSpanMilliseconds { get; set; } = 600;
+    public int MotionZoneRecurringHits { get; set; } = 4;
     public int MotionZoneRecurringHoldMilliseconds { get; set; } = 30_000;
 
     public int MotionZoneDimDurationMilliseconds { get; set; } = 1_200;
-    public int MotionZoneDimSteps { get; set; } = 8;
+    public int MotionZoneDimSteps { get; set; } = 6;
 
     public int ForegroundWindowRevealMilliseconds { get; set; } = 1_500;
     public int ForegroundWindowFadeMilliseconds { get; set; } = 500;
@@ -128,21 +123,39 @@ public sealed class AppSettings
             ForegroundWindowFadeMilliseconds = 500;
         }
 
-        if (SchemaVersion < 43)
+        // 4.8.0 forced several detection values upward. Restore only exact
+        // forced values, preserving unrelated choices and larger custom values.
+        if (SchemaVersion == 43)
         {
-            MotionZonePixelThreshold = Math.Max(MotionZonePixelThreshold, 10);
-            MotionZoneMinimumMotionCells = Math.Max(MotionZoneMinimumMotionCells, 3);
-            MotionZoneRenderJoinGapPixels = Math.Max(MotionZoneRenderJoinGapPixels, 20);
-            MotionZoneRecurringMinimumSpanMilliseconds =
-                Math.Max(MotionZoneRecurringMinimumSpanMilliseconds, 900);
-            MotionZoneRecurringHits = Math.Max(MotionZoneRecurringHits, 6);
-            MotionZoneDimSteps = Math.Max(MotionZoneDimSteps, 8);
+            if (MotionZonePixelThreshold == 10)
+            {
+                MotionZonePixelThreshold = 8;
+            }
 
-            MotionZoneBoundsMemoryMilliseconds = 1_600;
-            MotionZoneBoundsUpdateMilliseconds = 100;
-            MotionZoneBoundsOutlierFraction = 0.08;
-            MotionZoneCursorSuppressionPixels = 36;
-            MotionZoneCursorArtifactAreaPixels = 18_000;
+            if (MotionZoneMinimumMotionCells == 3)
+            {
+                MotionZoneMinimumMotionCells = 2;
+            }
+
+            if (MotionZoneRenderJoinGapPixels == 20)
+            {
+                MotionZoneRenderJoinGapPixels = 18;
+            }
+
+            if (MotionZoneRecurringMinimumSpanMilliseconds == 900)
+            {
+                MotionZoneRecurringMinimumSpanMilliseconds = 600;
+            }
+
+            if (MotionZoneRecurringHits == 6)
+            {
+                MotionZoneRecurringHits = 4;
+            }
+
+            if (MotionZoneDimSteps == 8)
+            {
+                MotionZoneDimSteps = 6;
+            }
         }
 
         SchemaVersion = CurrentSchemaVersion;
@@ -168,11 +181,6 @@ public sealed class AppSettings
         MotionZoneRenderMergeGapCells = Math.Clamp(MotionZoneRenderMergeGapCells, 0, 3);
         MotionZoneRenderJoinGapPixels = Math.Clamp(MotionZoneRenderJoinGapPixels, 0, 60);
         MotionZoneTrackingGapCells = Math.Clamp(MotionZoneTrackingGapCells, 0, 6);
-        MotionZoneBoundsMemoryMilliseconds = Math.Clamp(MotionZoneBoundsMemoryMilliseconds, 500, 5_000);
-        MotionZoneBoundsUpdateMilliseconds = Math.Clamp(MotionZoneBoundsUpdateMilliseconds, 40, 500);
-        MotionZoneBoundsOutlierFraction = Math.Clamp(MotionZoneBoundsOutlierFraction, 0.02, 0.30);
-        MotionZoneCursorSuppressionPixels = Math.Clamp(MotionZoneCursorSuppressionPixels, 16, 120);
-        MotionZoneCursorArtifactAreaPixels = Math.Clamp(MotionZoneCursorArtifactAreaPixels, 1_000, 80_000);
 
         MotionZoneSceneChangeFraction = Math.Clamp(MotionZoneSceneChangeFraction, 0.05, 0.40);
         MotionZoneSceneChangeOverlapFraction = Math.Clamp(MotionZoneSceneChangeOverlapFraction, 0.10, 0.90);

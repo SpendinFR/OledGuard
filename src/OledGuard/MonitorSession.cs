@@ -52,8 +52,6 @@ internal sealed partial class MonitorSession : IDisposable
         public bool Recurring;
         public int DimStep;
         public bool IsForegroundIntroduction;
-        public long LastBoundsUpdateTicks;
-        public readonly List<RegionObservation> Observations = new();
     }
 
     private readonly FormsScreen _screen;
@@ -378,7 +376,6 @@ internal sealed partial class MonitorSession : IDisposable
             _sceneSettleUntilTicks = 0;
 
             DetectMotion(current);
-            SuppressCursorInducedMotion();
             BuildDetectedRegions();
             MergeNearbyDetectedRegions();
 
@@ -1048,11 +1045,6 @@ internal sealed partial class MonitorSession : IDisposable
         foreach (var detected in
                  _detectedRegions)
         {
-            if (IsLikelyCursorArtifact(detected))
-            {
-                continue;
-            }
-
             var detectedArea =
                 Math.Max(
                     1,
@@ -1225,7 +1217,7 @@ internal sealed partial class MonitorSession : IDisposable
             var oldDimStep =
                 best.DimStep;
 
-            UpdateStableBoundsFromHistory(
+            ExpandStableBounds(
                 best,
                 detected,
                 now);
@@ -1280,6 +1272,9 @@ internal sealed partial class MonitorSession : IDisposable
                 detected.MaximumRow,
                 detected.MinimumColumn,
                 detected.MaximumColumn);
+        var detectedInside =
+            intersection /
+            (double)detectedArea;
         var trackedInside =
             intersection /
             (double)trackedArea;
@@ -1296,6 +1291,31 @@ internal sealed partial class MonitorSession : IDisposable
         var learningTicks =
             ToStopwatchTicks(
                 700);
+        var expandsBounds =
+            detected.MinimumRow <
+                tracked.MinimumRow ||
+            detected.MaximumRow >
+                tracked.MaximumRow ||
+            detected.MinimumColumn <
+                tracked.MinimumColumn ||
+            detected.MaximumColumn >
+                tracked.MaximumColumn;
+
+        // A validated zone may still follow real content, but a hover fragment
+        // beside the cursor must not enlarge its permanent rectangle.
+        if (tracked.Recurring &&
+            expandsBounds &&
+            detectedInside < 0.85 &&
+            IsCursorNearDetectedRegion(
+                detected,
+                Math.Max(
+                    12,
+                    _settings
+                        .MouseVisualRadiusPixels +
+                    8)))
+        {
+            return;
+        }
 
         if (ageTicks >
                 learningTicks &&
@@ -1330,10 +1350,12 @@ internal sealed partial class MonitorSession : IDisposable
                 minimumColumn,
                 maximumColumn);
         var maximumGrowth =
-            ageTicks <=
-                learningTicks
-                ? 2.50
-                : 1.75;
+            tracked.Recurring
+                ? 1.35
+                : ageTicks <=
+                    learningTicks
+                    ? 2.50
+                    : 1.75;
 
         if (unionArea >
             trackedArea *
@@ -1350,6 +1372,49 @@ internal sealed partial class MonitorSession : IDisposable
             minimumColumn;
         tracked.MaximumColumn =
             maximumColumn;
+    }
+
+    private bool IsCursorNearDetectedRegion(
+        DetectedRegion detected,
+        double marginPixels)
+    {
+        if (!NativeMethods.GetCursorPos(out var cursor))
+        {
+            return false;
+        }
+
+        var bounds = _screen.Bounds;
+
+        if (!bounds.Contains(cursor.X, cursor.Y))
+        {
+            return false;
+        }
+
+        var column = Math.Clamp(
+            (cursor.X - bounds.Left) * _columns /
+            Math.Max(1, bounds.Width),
+            0,
+            _columns - 1);
+        var row = Math.Clamp(
+            (cursor.Y - bounds.Top) * _rows /
+            Math.Max(1, bounds.Height),
+            0,
+            _rows - 1);
+        var columnMargin = Math.Max(
+            1,
+            (int)Math.Ceiling(
+                marginPixels * _columns /
+                Math.Max(1.0, bounds.Width)));
+        var rowMargin = Math.Max(
+            1,
+            (int)Math.Ceiling(
+                marginPixels * _rows /
+                Math.Max(1.0, bounds.Height)));
+
+        return column >= detected.MinimumColumn - columnMargin &&
+               column <= detected.MaximumColumn + columnMargin &&
+               row >= detected.MinimumRow - rowMargin &&
+               row <= detected.MaximumRow + rowMargin;
     }
 
     private void RefreshTrackedRegion(
@@ -1432,13 +1497,6 @@ internal sealed partial class MonitorSession : IDisposable
         {
             var region =
                 _trackedRegions[index];
-
-            if (!region.IsForegroundIntroduction &&
-                RefreshTrackedBoundsFromHistory(region, now))
-            {
-                changed = true;
-            }
-
             var holdTicks =
                 region.IsForegroundIntroduction
                     ? foregroundRevealTicks

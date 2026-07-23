@@ -188,9 +188,9 @@ internal sealed partial class MonitorSession
             Math.Max(
                 1,
                 (int)Math.Ceiling(
-                    _settings.MotionZoneRenderJoinGapPixels *
+                    7.0 *
                     _rows /
-                    (double)Math.Max(1, bounds.Height)));
+                    Math.Max(1, bounds.Height)));
 
         var merged = true;
 
@@ -241,7 +241,12 @@ internal sealed partial class MonitorSession
         int maximumColumnGap,
         int maximumRowGap)
     {
-        if (Math.Abs(first.DimStep - second.DimStep) > 2 ||
+        var dimStepDifference =
+            Math.Abs(
+                first.DimStep -
+                second.DimStep);
+
+        if (dimStepDifference > 1 ||
             first.IsForegroundIntroduction ||
             second.IsForegroundIntroduction)
         {
@@ -273,6 +278,15 @@ internal sealed partial class MonitorSession
                 second.MinimumColumn,
                 second.MaximumColumn);
 
+        if (dimStepDifference > 0 &&
+            ((rowOverlap > 0 &&
+              columnGap > 1) ||
+             (columnOverlap > 0 &&
+              rowGap > 1)))
+        {
+            return false;
+        }
+
         var horizontalAlignment =
             rowOverlap /
             (double)Math.Max(
@@ -284,20 +298,12 @@ internal sealed partial class MonitorSession
                 1,
                 Math.Min(first.Width, second.Width));
 
-        var overlapping =
-            rowOverlap > 0 &&
-            columnOverlap > 0;
         var horizontallyRelated =
-            horizontalAlignment >= 0.48 &&
+            horizontalAlignment >= 0.55 &&
             columnGap <= maximumColumnGap;
         var verticallyRelated =
-            verticalAlignment >= 0.62 &&
+            verticalAlignment >= 0.72 &&
             rowGap <= maximumRowGap;
-
-        if (overlapping)
-        {
-            return true;
-        }
 
         if (!horizontallyRelated &&
             !verticallyRelated)
@@ -334,7 +340,7 @@ internal sealed partial class MonitorSession
 
         return unionArea <=
             Math.Max(1, occupiedArea) *
-            1.85;
+            1.65;
     }
 
     private static RenderRegionState MergeRenderRegions(
@@ -351,7 +357,10 @@ internal sealed partial class MonitorSession
                 Math.Min(first.MinimumColumn, second.MinimumColumn),
             MaximumColumn =
                 Math.Max(first.MaximumColumn, second.MaximumColumn),
-            DimStep = Math.Min(first.DimStep, second.DimStep),
+            DimStep =
+                Math.Min(
+                    first.DimStep,
+                    second.DimStep),
             IsForegroundIntroduction = false
         };
     }

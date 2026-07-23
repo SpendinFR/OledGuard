@@ -211,47 +211,40 @@ internal sealed class MaskSurface : FrameworkElement
     private Geometry? CreateRectangleGeometry(
         Rect normalized)
     {
-        const double seamBleed = 1.0;
         var left =
-            Math.Max(
-                0.0,
-                Math.Floor(
-                    Math.Clamp(
-                        normalized.Left,
-                        0.0,
-                        1.0) *
-                    ActualWidth) -
-                seamBleed);
+            Math.Floor(
+                Math.Clamp(
+                    normalized.Left,
+                    0.0,
+                    1.0) *
+                ActualWidth);
         var top =
-            Math.Max(
-                0.0,
-                Math.Floor(
-                    Math.Clamp(
-                        normalized.Top,
-                        0.0,
-                        1.0) *
-                    ActualHeight) -
-                seamBleed);
+            Math.Floor(
+                Math.Clamp(
+                    normalized.Top,
+                    0.0,
+                    1.0) *
+                ActualHeight);
         var right =
-            Math.Min(
-                ActualWidth,
-                Math.Ceiling(
-                    Math.Clamp(
-                        normalized.Right,
-                        0.0,
-                        1.0) *
-                    ActualWidth) +
-                seamBleed);
+            Math.Ceiling(
+                Math.Clamp(
+                    normalized.Right,
+                    0.0,
+                    1.0) *
+                ActualWidth);
         var bottom =
-            Math.Min(
-                ActualHeight,
-                Math.Ceiling(
-                    Math.Clamp(
-                        normalized.Bottom,
-                        0.0,
-                        1.0) *
-                    ActualHeight) +
-                seamBleed);
+            Math.Ceiling(
+                Math.Clamp(
+                    normalized.Bottom,
+                    0.0,
+                    1.0) *
+                ActualHeight);
+
+        const double seamBleed = 0.5;
+        left = Math.Max(0.0, left - seamBleed);
+        top = Math.Max(0.0, top - seamBleed);
+        right = Math.Min(ActualWidth, right + seamBleed);
+        bottom = Math.Min(ActualHeight, bottom + seamBleed);
 
         if (right <= left ||
             bottom <= top)

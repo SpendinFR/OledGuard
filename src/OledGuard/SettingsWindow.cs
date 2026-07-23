@@ -117,8 +117,8 @@ internal sealed class SettingsWindow : Window
             {
                 Text =
                     "Réglages simples du moteur réellement utilisé. " +
-                    "Les contours suivent l'activité réelle, corrigent " +
-                    "les extensions accidentelles et s'assombrissent sans traces.",
+                    "Les zones restent carrées et stables, puis " +
+                    "s'assombrissent entièrement par étapes.",
                 TextWrapping =
                     TextWrapping.Wrap,
                 Foreground =
