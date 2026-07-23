@@ -8,25 +8,41 @@ public sealed class ProtectionController : IDisposable
 {
     private readonly SettingsStore _settingsStore;
     private readonly object _sync = new();
-    private readonly List<MonitorSession> _sessions = new();
+    private readonly List<MonitorSession>
+        _sessions = new();
+
     private bool _started;
     private bool _disposed;
 
-    public ProtectionController(AppSettings settings, SettingsStore settingsStore)
+    public ProtectionController(
+        AppSettings settings,
+        SettingsStore settingsStore)
     {
         Settings = settings;
-        _settingsStore = settingsStore;
+        _settingsStore =
+            settingsStore;
     }
 
-    public AppSettings Settings { get; private set; }
-    public bool Enabled => Settings.Enabled;
+    public AppSettings Settings
+    {
+        get;
+        private set;
+    }
+
+    public bool Enabled =>
+        Settings.Enabled;
+
     public bool CaptureExclusionAvailable
     {
         get
         {
             lock (_sync)
             {
-                return _sessions.Count > 0 && _sessions.All(session => session.ExcludedFromCapture);
+                return _sessions.Count > 0 &&
+                       _sessions.All(
+                           session =>
+                               session
+                                   .ExcludedFromCapture);
             }
         }
     }
@@ -43,86 +59,134 @@ public sealed class ProtectionController : IDisposable
 
         _started = true;
         RecreateSessions();
-        SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+
+        SystemEvents.DisplaySettingsChanged +=
+            OnDisplaySettingsChanged;
     }
 
     public void Toggle()
     {
-        SetEnabled(!Enabled);
+        SetEnabled(
+            !Enabled);
     }
 
-    public void SetEnabled(bool enabled)
+    public void SetEnabled(
+        bool enabled)
     {
-        Settings.Enabled = enabled;
-        _settingsStore.Save(Settings);
+        Settings.Enabled =
+            enabled;
+        _settingsStore.Save(
+            Settings);
 
         lock (_sync)
         {
-            foreach (var session in _sessions)
+            foreach (var session in
+                     _sessions)
             {
-                session.SetEnabled(enabled);
+                session.SetEnabled(
+                    enabled);
             }
         }
 
-        StateChanged?.Invoke(this, EventArgs.Empty);
+        StateChanged?.Invoke(
+            this,
+            EventArgs.Empty);
     }
 
-    public void RevealAll(TimeSpan? duration = null)
+    public void RevealAll(
+        TimeSpan? duration = null)
     {
-        var actualDuration = duration ?? TimeSpan.FromSeconds(10);
+        var actualDuration =
+            duration ??
+            TimeSpan.FromSeconds(
+                10);
+
         lock (_sync)
         {
-            foreach (var session in _sessions)
+            foreach (var session in
+                     _sessions)
             {
-                session.RevealAll(actualDuration);
+                session.RevealAll(
+                    actualDuration);
             }
         }
     }
 
-    public void SetDelaySeconds(int seconds)
+    public void SetDelaySeconds(
+        int seconds)
     {
-        var updated = Settings.Clone();
-        updated.StaticDelaySeconds = seconds;
-        ApplySettings(updated);
+        var updated =
+            Settings.Clone();
+
+        updated
+            .MotionZoneRecurringHoldMilliseconds =
+            seconds *
+            1000;
+
+        ApplySettings(
+            updated);
     }
 
-    public void ApplySettings(AppSettings updated)
+    public void ApplySettings(
+        AppSettings updated)
     {
         updated.Normalize();
         Settings = updated;
-        _settingsStore.Save(Settings);
-        StartupManager.Apply(Settings.StartWithWindows);
+
+        _settingsStore.Save(
+            Settings);
+        StartupManager.Apply(
+            Settings.StartWithWindows);
+
         RecreateSessions();
-        SettingsChanged?.Invoke(this, EventArgs.Empty);
-        StateChanged?.Invoke(this, EventArgs.Empty);
+
+        SettingsChanged?.Invoke(
+            this,
+            EventArgs.Empty);
+        StateChanged?.Invoke(
+            this,
+            EventArgs.Empty);
     }
 
-    private void OnDisplaySettingsChanged(object? sender, EventArgs e)
+    private void OnDisplaySettingsChanged(
+        object? sender,
+        EventArgs e)
     {
-        System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(RecreateSessions));
+        Application.Current.Dispatcher.BeginInvoke(
+            new Action(
+                RecreateSessions));
     }
 
     private void RecreateSessions()
     {
         lock (_sync)
         {
-            foreach (var session in _sessions)
+            foreach (var session in
+                     _sessions)
             {
                 session.Dispose();
             }
+
             _sessions.Clear();
 
-            foreach (var screen in FormsScreen.AllScreens)
+            foreach (var screen in
+                     FormsScreen.AllScreens)
             {
                 try
                 {
-                    var session = new MonitorSession(screen, Settings);
-                    _sessions.Add(session);
-                    session.Start(Settings.Enabled);
+                    var session =
+                        new MonitorSession(
+                            screen,
+                            Settings);
+
+                    _sessions.Add(
+                        session);
+                    session.Start(
+                        Settings.Enabled);
                 }
                 catch
                 {
-                    // Continue protecting the other monitors if one session cannot start.
+                    // Continue protecting other monitors if one fails.
                 }
             }
         }
@@ -136,14 +200,18 @@ public sealed class ProtectionController : IDisposable
         }
 
         _disposed = true;
-        SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+
+        SystemEvents.DisplaySettingsChanged -=
+            OnDisplaySettingsChanged;
 
         lock (_sync)
         {
-            foreach (var session in _sessions)
+            foreach (var session in
+                     _sessions)
             {
                 session.Dispose();
             }
+
             _sessions.Clear();
         }
     }

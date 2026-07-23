@@ -24,244 +24,584 @@ namespace OledGuard;
 
 internal sealed class SettingsWindow : Window
 {
-    private readonly ComboBox _staticDelay;
-    private readonly ComboBox _cellSize;
-    private readonly ComboBox _samplesPerCell;
+    private readonly ComboBox _activeHold;
+    private readonly Slider _briefHold;
+    private readonly Slider _dimDuration;
+    private readonly Slider _dimSteps;
     private readonly Slider _maximumOpacity;
-    private readonly Slider _minimumLuminance;
-    private readonly Slider _darkenFade;
-    private readonly Slider _revealFade;
-    private readonly Slider _shortReference;
-    private readonly Slider _mediumReference;
-    private readonly Slider _longReference;
-    private readonly Slider _stableConfirmations;
-    private readonly Slider _differenceThreshold;
-    private readonly Slider _changedFraction;
-    private readonly Slider _majorityPasses;
-    private readonly Slider _majorityThreshold;
-    private readonly Slider _minimumDimRegion;
-    private readonly Slider _maximumBrightHole;
-    private readonly Slider _visibleSampling;
-    private readonly Slider _maskedSampling;
+
+    private readonly Slider _padding;
+    private readonly Slider _minimumMotion;
+    private readonly Slider _mergeGap;
+    private readonly Slider _sampling;
+
+    private readonly CheckBox _mouseVisual;
+    private readonly Slider _mouseRadius;
+    private readonly Slider _mouseTrail;
+
     private readonly CheckBox _startWithWindows;
 
-    public SettingsWindow(AppSettings settings)
+    public SettingsWindow(
+        AppSettings settings)
     {
-        Title = "OledGuard — Détection de stabilité";
-        Width = 620;
+        Title =
+            "OledGuard — Paramètres";
+        Width = 640;
         Height = 820;
-        MinWidth = 520;
+        MinWidth = 540;
         MinHeight = 620;
-        WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        ResizeMode = ResizeMode.CanResize;
-        Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(245, 245, 245));
+        WindowStartupLocation =
+            WindowStartupLocation.CenterScreen;
+        ResizeMode =
+            ResizeMode.CanResize;
+        Background =
+            new SolidColorBrush(
+                Color.FromRgb(
+                    245,
+                    245,
+                    245));
 
-        var root = new Grid { Margin = new Thickness(20) };
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var root =
+            new Grid
+            {
+                Margin =
+                    new Thickness(
+                        20)
+            };
 
-        var heading = new TextBlock
-        {
-            Text = "Zones statiques propres",
-            FontSize = 22,
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 0, 0, 5)
-        };
-        Grid.SetRow(heading, 0);
-        root.Children.Add(heading);
+        root.RowDefinitions.Add(
+            new RowDefinition
+            {
+                Height =
+                    GridLength.Auto
+            });
+        root.RowDefinitions.Add(
+            new RowDefinition
+            {
+                Height =
+                    new GridLength(
+                        1,
+                        GridUnitType.Star)
+            });
+        root.RowDefinitions.Add(
+            new RowDefinition
+            {
+                Height =
+                    GridLength.Auto
+            });
 
-        var subtitle = new TextBlock
-        {
-            Text = "Comparaison courte, moyenne et longue ; nettoyage des petits îlots dans les deux sens.",
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = System.Windows.Media.Brushes.DimGray,
-            Margin = new Thickness(0, 30, 0, 10)
-        };
-        Grid.SetRow(subtitle, 0);
-        root.Children.Add(subtitle);
+        var heading =
+            new TextBlock
+            {
+                Text =
+                    "Protection OLED",
+                FontSize = 22,
+                FontWeight =
+                    FontWeights.SemiBold,
+                Margin =
+                    new Thickness(
+                        0,
+                        0,
+                        0,
+                        5)
+            };
 
-        var form = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(0, 0, 12, 0) };
-        var scroll = new ScrollViewer
-        {
-            Content = form,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
-        };
-        Grid.SetRow(scroll, 1);
-        root.Children.Add(scroll);
+        Grid.SetRow(
+            heading,
+            0);
+        root.Children.Add(
+            heading);
 
-        AddSection(form, "Résultat visuel");
-        _staticDelay = AddCombo(
+        var subtitle =
+            new TextBlock
+            {
+                Text =
+                    "Réglages simples du moteur réellement utilisé. " +
+                    "Les zones restent carrées et stables, puis " +
+                    "s'assombrissent entièrement par étapes.",
+                TextWrapping =
+                    TextWrapping.Wrap,
+                Foreground =
+                    Brushes.DimGray,
+                Margin =
+                    new Thickness(
+                        0,
+                        30,
+                        0,
+                        10)
+            };
+
+        Grid.SetRow(
+            subtitle,
+            0);
+        root.Children.Add(
+            subtitle);
+
+        var form =
+            new StackPanel
+            {
+                Orientation =
+                    Orientation.Vertical,
+                Margin =
+                    new Thickness(
+                        0,
+                        0,
+                        12,
+                        0)
+            };
+
+        var scroll =
+            new ScrollViewer
+            {
+                Content = form,
+                VerticalScrollBarVisibility =
+                    ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility =
+                    ScrollBarVisibility.Disabled
+            };
+
+        Grid.SetRow(
+            scroll,
+            1);
+        root.Children.Add(
+            scroll);
+
+        AddSection(
             form,
-            "Temps sans mouvement avant assombrissement",
-            new[] { 5, 15, 30, 60, 120, 180, 300, 600, 900 },
-            settings.StaticDelaySeconds,
-            "secondes");
-        _maximumOpacity = AddSlider(form, "Assombrissement maximum", 25, 98, settings.MaximumMaskOpacity * 100.0, "%");
-        _minimumLuminance = AddSlider(form, "Ne pas traiter une région plus sombre que", 0, 100, settings.MinimumLuminanceToDim, "luminance");
-        _darkenFade = AddSlider(form, "Durée du fondu vers sombre", 1, 120, settings.DarkenFadeMilliseconds / 1000.0, "s");
-        _revealFade = AddSlider(form, "Réapparition après mouvement", 40, 2000, settings.RevealFadeMilliseconds, "ms");
+            "Comportement");
 
-        AddSection(form, "Comparaisons temporelles");
-        _shortReference = AddSlider(form, "Référence courte", 1, 15, settings.ShortReferenceSeconds, "s");
-        _mediumReference = AddSlider(form, "Référence moyenne", 3, 120, settings.MediumReferenceSeconds, "s");
-        _longReference = AddSlider(form, "Référence longue", 10, 600, settings.LongReferenceSeconds, "s");
-        _stableConfirmations = AddSlider(form, "Captures stables nécessaires", 1, 12, settings.StableConfirmationSamples, "captures");
+        _activeHold =
+            AddCombo(
+                form,
+                "Maintien d'une zone animée après son dernier mouvement",
+                new[]
+                {
+                    10,
+                    15,
+                    30,
+                    45,
+                    60,
+                    90,
+                    120
+                },
+                settings
+                    .MotionZoneRecurringHoldMilliseconds /
+                1000,
+                "secondes");
 
-        AddSection(form, "Taille et sensibilité");
-        _cellSize = AddCombo(
+        _briefHold =
+            AddSlider(
+                form,
+                "Maintien d'un changement bref",
+                1,
+                10,
+                settings
+                    .MotionZoneOneShotHoldMilliseconds /
+                1000.0,
+                "s",
+                1);
+
+        _dimDuration =
+            AddSlider(
+                form,
+                "Durée de l'assombrissement complet de la zone",
+                0,
+                5,
+                settings
+                    .MotionZoneDimDurationMilliseconds /
+                1000.0,
+                "s",
+                1);
+
+        _dimSteps =
+            AddSlider(
+                form,
+                "Nombre d'étapes d'assombrissement",
+                2,
+                12,
+                settings
+                    .MotionZoneDimSteps,
+                "étapes");
+
+        _maximumOpacity =
+            AddSlider(
+                form,
+                "Assombrissement maximal",
+                40,
+                95,
+                settings
+                    .MaximumMaskOpacity *
+                100.0,
+                "%");
+
+        AddSection(
             form,
-            "Taille des zones d'analyse",
-            new[] { 32, 40, 48, 64, 80, 96, 128, 160 },
-            settings.DetectionCellSizePixels,
-            "px");
-        _samplesPerCell = AddCombo(
+            "Forme et réactivité");
+
+        _padding =
+            AddSlider(
+                form,
+                "Marge propre autour d'une zone détectée",
+                0,
+                3,
+                settings
+                    .MotionZonePaddingCells,
+                "cellules");
+
+        _minimumMotion =
+            AddSlider(
+                form,
+                "Taille minimale d'un mouvement",
+                2,
+                20,
+                settings
+                    .MotionZoneMinimumMotionCells,
+                "cellules");
+
+        _mergeGap =
+            AddSlider(
+                form,
+                "Petit espace autorisé dans un même logo ou symbole",
+                0,
+                3,
+                settings
+                    .MotionZoneRenderMergeGapCells,
+                "cellules");
+
+        _sampling =
+            AddSlider(
+                form,
+                "Réactivité de détection",
+                16,
+                60,
+                settings
+                    .MotionZoneSamplingMilliseconds,
+                "ms");
+
+        form.Children.Add(
+            new TextBlock
+            {
+                Text =
+                    "Valeurs recommandées : marge 1, mouvement 3, " +
+                    "espace 1 et détection 20 ms. Les augmenter " +
+                    "rend les zones plus larges ou moins sensibles.",
+                TextWrapping =
+                    TextWrapping.Wrap,
+                Foreground =
+                    Brushes.DimGray,
+                Margin =
+                    new Thickness(
+                        0,
+                        8,
+                        0,
+                        4)
+            });
+
+        AddSection(
             form,
-            "Échantillons par zone",
-            new[] { 2, 3, 4, 5, 6, 8 },
-            settings.SamplesPerCell,
-            "par côté");
-        _differenceThreshold = AddSlider(form, "Différence moyenne minimale", 0.5, 30, settings.DifferenceThreshold, "", 1);
-        _changedFraction = AddSlider(form, "Part d'échantillons modifiés", 1, 100, settings.ChangedSampleFraction * 100.0, "%");
+            "Souris");
 
-        AddSection(form, "Nettoyage bidirectionnel");
-        _majorityPasses = AddSlider(form, "Passages du filtre de majorité", 0, 5, settings.MajorityFilterPasses, "passes");
-        _majorityThreshold = AddSlider(form, "Voisins statiques nécessaires sur 9", 5, 8, settings.MajorityDimThreshold, "voisins");
-        _minimumDimRegion = AddSlider(form, "Taille minimale d'une zone à assombrir", 1, 100, settings.MinimumDimRegionCells, "cellules");
-        _maximumBrightHole = AddSlider(form, "Taille maximale d'un trou clair à combler", 0, 100, settings.MaximumBrightHoleCells, "cellules");
+        _mouseVisual =
+            new CheckBox
+            {
+                Content =
+                    new TextBlock
+                    {
+                        Text =
+                            "Halo fluide autour du curseur lorsqu'aucune zone dessous n'est déjà révélée",
+                        TextWrapping =
+                            TextWrapping.Wrap
+                    },
+                IsChecked =
+                    settings
+                        .MouseVisualEnabled,
+                Margin =
+                    new Thickness(
+                        0,
+                        8,
+                        0,
+                        8)
+            };
 
-        AddSection(form, "Performance");
-        _visibleSampling = AddSlider(form, "Intervalle d'analyse normal", 250, 5000, settings.VisibleSamplingMilliseconds, "ms");
-        _maskedSampling = AddSlider(form, "Intervalle quand une zone est sombre", 100, 3000, settings.MaskedSamplingMilliseconds, "ms");
-        _startWithWindows = new CheckBox
-        {
-            Content = "Démarrer avec Windows",
-            IsChecked = settings.StartWithWindows,
-            Margin = new Thickness(0, 12, 0, 8)
-        };
-        form.Children.Add(_startWithWindows);
+        form.Children.Add(
+            _mouseVisual);
 
-        form.Children.Add(new TextBlock
-        {
-            Text = "Point de départ conseillé : 64 px, 2 / 15 / 60 s, délai 120 s, fondu 20 s, opacité 85 %, majorité 6/9 sur 2 passes. Une petite tache sombre est supprimée ; un petit trou clair entouré de sombre est comblé.",
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = System.Windows.Media.Brushes.DimGray,
-            Margin = new Thickness(0, 12, 0, 12)
-        });
+        _mouseRadius =
+            AddSlider(
+                form,
+                "Taille du halo",
+                8,
+                40,
+                settings
+                    .MouseVisualRadiusPixels,
+                "px");
 
-        var buttons = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(0, 14, 0, 0)
-        };
-        Grid.SetRow(buttons, 2);
-        root.Children.Add(buttons);
+        _mouseTrail =
+            AddSlider(
+                form,
+                "Longueur de la trace fluide",
+                0,
+                180,
+                settings
+                    .MouseTrailMilliseconds,
+                "ms");
 
-        var cancel = new Button
-        {
-            Content = "Annuler",
-            MinWidth = 90,
-            Margin = new Thickness(0, 0, 10, 0),
-            Padding = new Thickness(12, 7, 12, 7)
-        };
-        cancel.Click += (_, _) =>
-        {
-            DialogResult = false;
-            Close();
-        };
-        buttons.Children.Add(cancel);
+        _startWithWindows =
+            new CheckBox
+            {
+                Content =
+                    "Démarrer avec Windows",
+                IsChecked =
+                    settings
+                        .StartWithWindows,
+                Margin =
+                    new Thickness(
+                        0,
+                        18,
+                        0,
+                        8)
+            };
 
-        var save = new Button
-        {
-            Content = "Enregistrer",
-            MinWidth = 110,
-            IsDefault = true,
-            Padding = new Thickness(12, 7, 12, 7)
-        };
-        save.Click += (_, _) =>
-        {
-            DialogResult = true;
-            Close();
-        };
-        buttons.Children.Add(save);
+        form.Children.Add(
+            _startWithWindows);
+
+        var buttons =
+            new StackPanel
+            {
+                Orientation =
+                    Orientation.Horizontal,
+                HorizontalAlignment =
+                    HorizontalAlignment.Right,
+                Margin =
+                    new Thickness(
+                        0,
+                        14,
+                        0,
+                        0)
+            };
+
+        Grid.SetRow(
+            buttons,
+            2);
+        root.Children.Add(
+            buttons);
+
+        var cancel =
+            new Button
+            {
+                Content =
+                    "Annuler",
+                MinWidth = 90,
+                Margin =
+                    new Thickness(
+                        0,
+                        0,
+                        10,
+                        0),
+                Padding =
+                    new Thickness(
+                        12,
+                        7,
+                        12,
+                        7)
+            };
+
+        cancel.Click +=
+            (_, _) =>
+            {
+                DialogResult = false;
+                Close();
+            };
+
+        buttons.Children.Add(
+            cancel);
+
+        var save =
+            new Button
+            {
+                Content =
+                    "Enregistrer",
+                MinWidth = 110,
+                IsDefault = true,
+                Padding =
+                    new Thickness(
+                        12,
+                        7,
+                        12,
+                        7)
+            };
+
+        save.Click +=
+            (_, _) =>
+            {
+                DialogResult = true;
+                Close();
+            };
+
+        buttons.Children.Add(
+            save);
         Content = root;
     }
 
-    public AppSettings BuildSettings(AppSettings original)
+    public AppSettings BuildSettings(
+        AppSettings original)
     {
-        var updated = original.Clone();
-        updated.StaticDelaySeconds = (int)_staticDelay.SelectedItem;
-        updated.DetectionCellSizePixels = (int)_cellSize.SelectedItem;
-        updated.SamplesPerCell = (int)_samplesPerCell.SelectedItem;
-        updated.MaximumMaskOpacity = _maximumOpacity.Value / 100.0;
-        updated.MinimumLuminanceToDim = (byte)Math.Round(_minimumLuminance.Value);
-        updated.DarkenFadeMilliseconds = (int)Math.Round(_darkenFade.Value * 1000.0);
-        updated.RevealFadeMilliseconds = (int)Math.Round(_revealFade.Value);
-        updated.ShortReferenceSeconds = (int)Math.Round(_shortReference.Value);
-        updated.MediumReferenceSeconds = (int)Math.Round(_mediumReference.Value);
-        updated.LongReferenceSeconds = (int)Math.Round(_longReference.Value);
-        updated.StableConfirmationSamples = (int)Math.Round(_stableConfirmations.Value);
-        updated.DifferenceThreshold = _differenceThreshold.Value;
-        updated.ChangedSampleFraction = _changedFraction.Value / 100.0;
-        updated.MajorityFilterPasses = (int)Math.Round(_majorityPasses.Value);
-        updated.MajorityDimThreshold = (int)Math.Round(_majorityThreshold.Value);
-        updated.MinimumDimRegionCells = (int)Math.Round(_minimumDimRegion.Value);
-        updated.MaximumBrightHoleCells = (int)Math.Round(_maximumBrightHole.Value);
-        updated.VisibleSamplingMilliseconds = (int)Math.Round(_visibleSampling.Value);
-        updated.MaskedSamplingMilliseconds = (int)Math.Round(_maskedSampling.Value);
-        updated.StartWithWindows = _startWithWindows.IsChecked == true;
+        var updated =
+            original.Clone();
+
+        updated
+            .MotionZoneRecurringHoldMilliseconds =
+            (int)_activeHold.SelectedItem *
+            1000;
+        updated
+            .MotionZoneOneShotHoldMilliseconds =
+            (int)Math.Round(
+                _briefHold.Value *
+                1000.0);
+        updated
+            .MotionZoneDimDurationMilliseconds =
+            (int)Math.Round(
+                _dimDuration.Value *
+                1000.0);
+        updated.MotionZoneDimSteps =
+            (int)Math.Round(
+                _dimSteps.Value);
+        updated.MaximumMaskOpacity =
+            _maximumOpacity.Value /
+            100.0;
+
+        updated.MotionZonePaddingCells =
+            (int)Math.Round(
+                _padding.Value);
+        updated.MotionZoneMinimumMotionCells =
+            (int)Math.Round(
+                _minimumMotion.Value);
+        updated.MotionZoneRenderMergeGapCells =
+            (int)Math.Round(
+                _mergeGap.Value);
+        updated.MotionZoneSamplingMilliseconds =
+            (int)Math.Round(
+                _sampling.Value);
+
+        updated.MouseVisualEnabled =
+            _mouseVisual.IsChecked ==
+            true;
+        updated.MouseVisualRadiusPixels =
+            (int)Math.Round(
+                _mouseRadius.Value);
+        updated.MouseTrailMilliseconds =
+            (int)Math.Round(
+                _mouseTrail.Value);
+
+        updated.StartWithWindows =
+            _startWithWindows.IsChecked ==
+            true;
+
         updated.Normalize();
         return updated;
     }
 
-    private static void AddSection(StackPanel parent, string title)
+    private static void AddSection(
+        StackPanel parent,
+        string title)
     {
         if (parent.Children.Count > 0)
         {
-            parent.Children.Add(new Separator { Margin = new Thickness(0, 14, 0, 8) });
+            parent.Children.Add(
+                new Separator
+                {
+                    Margin =
+                        new Thickness(
+                            0,
+                            14,
+                            0,
+                            8)
+                });
         }
 
-        parent.Children.Add(new TextBlock
-        {
-            Text = title,
-            FontSize = 16,
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 2, 0, 5)
-        });
+        parent.Children.Add(
+            new TextBlock
+            {
+                Text = title,
+                FontSize = 16,
+                FontWeight =
+                    FontWeights.SemiBold,
+                Margin =
+                    new Thickness(
+                        0,
+                        2,
+                        0,
+                        5)
+            });
     }
 
-    private static ComboBox AddCombo(StackPanel parent, string label, int[] values, int selected, string suffix)
+    private static ComboBox AddCombo(
+        StackPanel parent,
+        string label,
+        int[] values,
+        int selected,
+        string suffix)
     {
-        parent.Children.Add(new TextBlock
-        {
-            Text = label,
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 7, 0, 4)
-        });
+        parent.Children.Add(
+            new TextBlock
+            {
+                Text = label,
+                FontWeight =
+                    FontWeights.SemiBold,
+                TextWrapping =
+                    TextWrapping.Wrap,
+                Margin =
+                    new Thickness(
+                        0,
+                        7,
+                        0,
+                        4)
+            });
 
-        var combo = new ComboBox
-        {
-            Width = 190,
-            HorizontalAlignment = HorizontalAlignment.Left
-        };
+        var combo =
+            new ComboBox
+            {
+                Width = 190,
+                HorizontalAlignment =
+                    HorizontalAlignment.Left
+            };
 
-        foreach (var value in values)
+        foreach (var value in
+                 values)
         {
-            combo.Items.Add(value);
+            combo.Items.Add(
+                value);
         }
 
-        combo.SelectedItem = values.Contains(selected)
-            ? selected
-            : values.OrderBy(value => Math.Abs(value - selected)).First();
-        parent.Children.Add(combo);
-        parent.Children.Add(new TextBlock
-        {
-            Text = suffix,
-            Foreground = System.Windows.Media.Brushes.Gray,
-            Margin = new Thickness(200, -25, 0, 5)
-        });
+        combo.SelectedItem =
+            values.Contains(
+                selected)
+                ? selected
+                : values
+                    .OrderBy(
+                        value =>
+                            Math.Abs(
+                                value -
+                                selected))
+                    .First();
+
+        parent.Children.Add(
+            combo);
+
+        parent.Children.Add(
+            new TextBlock
+            {
+                Text = suffix,
+                Foreground =
+                    Brushes.Gray,
+                Margin =
+                    new Thickness(
+                        200,
+                        -25,
+                        0,
+                        5)
+            });
+
         return combo;
     }
 
@@ -274,46 +614,94 @@ internal sealed class SettingsWindow : Window
         string suffix,
         int decimals = 0)
     {
-        parent.Children.Add(new TextBlock
-        {
-            Text = label,
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 7, 0, 3)
-        });
+        parent.Children.Add(
+            new TextBlock
+            {
+                Text = label,
+                FontWeight =
+                    FontWeights.SemiBold,
+                TextWrapping =
+                    TextWrapping.Wrap,
+                Margin =
+                    new Thickness(
+                        0,
+                        7,
+                        0,
+                        3)
+            });
 
-        var panel = new DockPanel();
-        var valueText = new TextBlock
-        {
-            Width = 110,
-            TextAlignment = TextAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        DockPanel.SetDock(valueText, Dock.Right);
-        panel.Children.Add(valueText);
+        var panel =
+            new DockPanel();
 
-        var slider = new Slider
-        {
-            Minimum = minimum,
-            Maximum = maximum,
-            Value = Math.Clamp(value, minimum, maximum),
-            TickFrequency = Math.Max(0.1, (maximum - minimum) / 10.0),
-            IsSnapToTickEnabled = false,
-            Margin = new Thickness(0, 0, 12, 0)
-        };
+        var valueText =
+            new TextBlock
+            {
+                Width = 110,
+                TextAlignment =
+                    TextAlignment.Right,
+                VerticalAlignment =
+                    VerticalAlignment.Center
+            };
+
+        DockPanel.SetDock(
+            valueText,
+            Dock.Right);
+        panel.Children.Add(
+            valueText);
+
+        var slider =
+            new Slider
+            {
+                Minimum = minimum,
+                Maximum = maximum,
+                Value =
+                    Math.Clamp(
+                        value,
+                        minimum,
+                        maximum),
+                TickFrequency =
+                    Math.Max(
+                        0.1,
+                        (maximum -
+                         minimum) /
+                        10.0),
+                IsSnapToTickEnabled = false,
+                Margin =
+                    new Thickness(
+                        0,
+                        0,
+                        12,
+                        0)
+            };
 
         void RefreshValue()
         {
-            var rounded = Math.Round(slider.Value, decimals);
-            var formatted = rounded.ToString("F" + decimals);
-            valueText.Text = string.IsNullOrWhiteSpace(suffix)
-                ? formatted
-                : $"{formatted} {suffix}";
+            var rounded =
+                Math.Round(
+                    slider.Value,
+                    decimals);
+            var formatted =
+                rounded.ToString(
+                    "F" +
+                    decimals);
+
+            valueText.Text =
+                string.IsNullOrWhiteSpace(
+                    suffix)
+                    ? formatted
+                    : $"{formatted} {suffix}";
         }
 
-        slider.ValueChanged += (_, _) => RefreshValue();
+        slider.ValueChanged +=
+            (_, _) =>
+                RefreshValue();
+
         RefreshValue();
-        panel.Children.Add(slider);
-        parent.Children.Add(panel);
+        panel.Children.Add(
+            slider);
+        parent.Children.Add(
+            panel);
+
         return slider;
     }
 }

@@ -10,9 +10,9 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>OledGuard</AssemblyName>
     <RootNamespace>OledGuard</RootNamespace>
-    <Version>4.6.8</Version>
+    <Version>4.7.0</Version>
     <Product>OledGuard</Product>
-    <Description>Assombrissement propre des zones réellement statiques pour écrans OLED.</Description>
+    <Description>Protection OLED propre par zones actives stables et rendu vectoriel.</Description>
     <Authors>OledGuard contributors</Authors>
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
@@ -21,6 +21,5 @@
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <DebugType>embedded</DebugType>
-    <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
 </Project>
