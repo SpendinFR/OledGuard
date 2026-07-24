@@ -5,7 +5,7 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 48;
+    public const int CurrentSchemaVersion = 49;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
@@ -19,7 +19,7 @@ public sealed class AppSettings
     public int MotionZonePixelThreshold { get; set; } = 8;
     public double MotionZoneChangedFraction { get; set; } = 0.08;
 
-    public int MotionZonePaddingCells { get; set; } = 2;
+    public int MotionZonePaddingCells { get; set; } = 1;
     public int MotionZoneMinimumMotionCells { get; set; } = 2;
     public int MotionZoneMinimumVisibleAreaCells { get; set; } = 4;
     public int MotionZoneMinimumOutputAreaPixels { get; set; } = 90;
@@ -178,12 +178,13 @@ public sealed class AppSettings
             }
         }
 
-        if (SchemaVersion < 48)
+        if (SchemaVersion < 49)
         {
-            // Upgrade only former stock values. Explicit user choices remain.
-            if (MotionZonePaddingCells == 1)
+            // 4.8.5 forced the global padding to 2, which created visible
+            // bars and oversized fragments. Restore the stable 4.8.2 value.
+            if (MotionZonePaddingCells == 2)
             {
-                MotionZonePaddingCells = 2;
+                MotionZonePaddingCells = 1;
             }
 
             if (ForegroundWindowRevealMilliseconds == 1_500)

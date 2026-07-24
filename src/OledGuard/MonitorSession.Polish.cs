@@ -73,15 +73,17 @@ internal sealed partial class MonitorSession
         }
 
         var screenBounds = _screen.Bounds;
+        var workingBounds = _screen.WorkingArea;
         var windowBounds =
             System.Drawing.Rectangle.FromLTRB(
                 nativeRectangle.Left,
                 nativeRectangle.Top,
                 nativeRectangle.Right,
                 nativeRectangle.Bottom);
+        // A foreground introduction must never claim the taskbar.
         var visibleBounds =
             System.Drawing.Rectangle.Intersect(
-                screenBounds,
+                workingBounds,
                 windowBounds);
 
         if (visibleBounds.Width < 40 ||

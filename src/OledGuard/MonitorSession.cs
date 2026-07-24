@@ -231,6 +231,7 @@ internal sealed partial class MonitorSession : IDisposable
 
             _detectedRegions.Clear();
             _trackedRegions.Clear();
+            ResetInteractionCompletion();
             ResetMouseVisual();
 
             Array.Clear(
@@ -399,7 +400,15 @@ internal sealed partial class MonitorSession : IDisposable
                 return;
             }
 
-            if (UpdateTrackedRegions(now))
+            var interactionChanged =
+                UpdateInteractionCompletion(
+                    current,
+                    now);
+            var trackedChanged =
+                UpdateTrackedRegions(now);
+
+            if (interactionChanged ||
+                trackedChanged)
             {
                 _maskDirty = true;
             }
@@ -455,6 +464,7 @@ internal sealed partial class MonitorSession : IDisposable
     {
         _trackedRegions.Clear();
         _detectedRegions.Clear();
+        ResetInteractionCompletion();
         ResetMouseVisual();
 
         if (revealForeground)
@@ -1844,6 +1854,9 @@ internal sealed partial class MonitorSession : IDisposable
             var visualChanged =
                 UpdateRegionVisualStates(
                     now);
+            var interactionChanged =
+                UpdateInteractionVisualState(
+                    now);
             var mouseChanged =
                 UpdateMouseVisual(
                     now);
@@ -1860,6 +1873,7 @@ internal sealed partial class MonitorSession : IDisposable
             shouldPush =
                 _maskDirty ||
                 visualChanged ||
+                interactionChanged ||
                 mouseChanged ||
                 revealAllExpired;
 
@@ -2109,6 +2123,13 @@ internal sealed partial class MonitorSession : IDisposable
                 0,
                 _rows - 1);
 
+        if (IsPointInsideInteractionReveal(
+                localX,
+                localY))
+        {
+            return true;
+        }
+
         foreach (var region in
                  _trackedRegions)
         {
@@ -2242,6 +2263,8 @@ internal sealed partial class MonitorSession : IDisposable
 
         AppendManualRevealZones(
             result);
+        AppendInteractionReveal(
+            result);
 
         return result;
     }
@@ -2260,26 +2283,15 @@ internal sealed partial class MonitorSession : IDisposable
 
         var bounds =
             _screen.Bounds;
-        var trailBaseRadius =
+        var baseRadius =
             _settings
                 .MouseVisualRadiusPixels;
-        var scaleAwareMinimumRadius =
-            Math.Clamp(
-                24.0 *
-                bounds.Height /
-                1_080.0,
-                28.0,
-                48.0);
-        var currentRadius =
-            Math.Max(
-                trailBaseRadius,
-                scaleAwareMinimumRadius);
 
         result.Add(
             CreateMouseReveal(
                 _cursorX,
                 _cursorY,
-                currentRadius,
+                baseRadius,
                 bounds));
 
         if (_mouseSuppressed)
@@ -2321,7 +2333,7 @@ internal sealed partial class MonitorSession : IDisposable
                 age /
                 (double)lifetimeTicks;
             var radius =
-                trailBaseRadius *
+                baseRadius *
                 (0.35 +
                  0.65 *
                  life);
