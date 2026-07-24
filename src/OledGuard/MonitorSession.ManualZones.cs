@@ -7,6 +7,9 @@ internal sealed partial class MonitorSession
     private readonly List<Rect>
         _manualRevealZones = new();
 
+    public string ScreenDeviceName =>
+        _screen.DeviceName;
+
     public void SetManualRevealZones(
         IReadOnlyList<Rect> zones)
     {
