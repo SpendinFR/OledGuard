@@ -1,7 +1,9 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
-using System.Windows.Media;
+using WpfBrushes = System.Windows.Media.Brushes;
+using WpfColor = System.Windows.Media.Color;
+using WpfSolidColorBrush = System.Windows.Media.SolidColorBrush;
 using FormsScreen = System.Windows.Forms.Screen;
 using WpfCursors = System.Windows.Input.Cursors;
 using WpfKey = System.Windows.Input.Key;
@@ -31,8 +33,8 @@ internal sealed class ManualZoneSelectionWindow : Window
             ResizeMode.NoResize;
         AllowsTransparency = true;
         Background =
-            new SolidColorBrush(
-                Color.FromArgb(
+            new WpfSolidColorBrush(
+                WpfColor.FromArgb(
                     34,
                     0,
                     0,
@@ -50,13 +52,13 @@ internal sealed class ManualZoneSelectionWindow : Window
             new Border
             {
                 BorderBrush =
-                    Brushes.DeepSkyBlue,
+                    WpfBrushes.DeepSkyBlue,
                 BorderThickness =
                     new Thickness(
                         2),
                 Background =
-                    new SolidColorBrush(
-                        Color.FromArgb(
+                    new WpfSolidColorBrush(
+                        WpfColor.FromArgb(
                             42,
                             0,
                             191,
@@ -70,8 +72,8 @@ internal sealed class ManualZoneSelectionWindow : Window
             new Border
             {
                 Background =
-                    new SolidColorBrush(
-                        Color.FromArgb(
+                    new WpfSolidColorBrush(
+                        WpfColor.FromArgb(
                             220,
                             20,
                             20,
@@ -91,7 +93,7 @@ internal sealed class ManualZoneSelectionWindow : Window
                         Text =
                             "Glissez pour garder une zone visible — Échap ou clic droit pour annuler",
                         Foreground =
-                            Brushes.White,
+                            WpfBrushes.White,
                         FontSize = 14,
                         FontWeight =
                             FontWeights.SemiBold
