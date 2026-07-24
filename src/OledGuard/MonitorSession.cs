@@ -2123,13 +2123,6 @@ internal sealed partial class MonitorSession : IDisposable
                 0,
                 _rows - 1);
 
-        if (IsPointInsideInteractionReveal(
-                localX,
-                localY))
-        {
-            return true;
-        }
-
         foreach (var region in
                  _trackedRegions)
         {
@@ -2261,6 +2254,8 @@ internal sealed partial class MonitorSession : IDisposable
                     opacity));
         }
 
+        PolishRenderMaskRegions(
+            result);
         AppendManualRevealZones(
             result);
         AppendInteractionReveal(
