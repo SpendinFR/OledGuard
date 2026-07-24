@@ -134,12 +134,12 @@ internal sealed partial class MonitorSession
     {
         if (!_settings.InteractionAssistEnabled)
         {
-            var changed =
+            var hadInteractionState =
                 _interactionRevealRegions.Count > 0 ||
                 _pointerControlReveal is not null;
 
             ResetInteractionAssistance();
-            return changed;
+            return hadInteractionState;
         }
 
         var changed =
