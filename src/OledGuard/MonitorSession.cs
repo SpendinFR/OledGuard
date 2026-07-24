@@ -372,7 +372,16 @@ internal sealed partial class MonitorSession : IDisposable
 
             if (titleChanged)
             {
-                _maskDirty = true;
+                // A new browser tab or a same-window navigation keeps the
+                // same HWND but changes the title and content. Treat it as a
+                // fresh foreground scene so the whole window remains readable
+                // for the normal three-second introduction.
+                ResetSceneToBaseline(
+                    current,
+                    now,
+                    foregroundWindow,
+                    revealForeground: true);
+                return;
             }
 
             if (_sceneSettleUntilTicks != 0 &&
@@ -2287,40 +2296,11 @@ internal sealed partial class MonitorSession : IDisposable
             _settings
                 .MouseVisualRadiusPixels;
 
-        // Read the Windows cursor again at render time. This removes the
-        // occasional one-frame gap between the cached cursor sample and the
-        // pointer actually visible on screen.
-        var currentX =
-            _cursorX;
-        var currentY =
-            _cursorY;
-
-        if (NativeMethods.GetCursorPos(
-                out var liveCursor) &&
-            bounds.Contains(
-                liveCursor.X,
-                liveCursor.Y))
-        {
-            currentX =
-                liveCursor.X -
-                bounds.Left;
-            currentY =
-                liveCursor.Y -
-                bounds.Top;
-        }
-
-        // Only the current pointer gets the small safety margin. The trail,
-        // interaction rectangles and tracked zones keep their 4.8.6 sizes.
-        var currentRadius =
-            Math.Max(
-                baseRadius,
-                22.0);
-
         result.Add(
             CreateMouseReveal(
-                currentX,
-                currentY,
-                currentRadius,
+                _cursorX,
+                _cursorY,
+                baseRadius,
                 bounds));
 
         if (_mouseSuppressed)
