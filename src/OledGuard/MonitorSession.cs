@@ -2123,6 +2123,13 @@ internal sealed partial class MonitorSession : IDisposable
                 0,
                 _rows - 1);
 
+        if (IsPointInsideInteractionReveal(
+                localX,
+                localY))
+        {
+            return true;
+        }
+
         foreach (var region in
                  _trackedRegions)
         {
@@ -2254,8 +2261,6 @@ internal sealed partial class MonitorSession : IDisposable
                     opacity));
         }
 
-        PolishRenderMaskRegions(
-            result);
         AppendManualRevealZones(
             result);
         AppendInteractionReveal(
@@ -2282,11 +2287,40 @@ internal sealed partial class MonitorSession : IDisposable
             _settings
                 .MouseVisualRadiusPixels;
 
+        // Read the Windows cursor again at render time. This removes the
+        // occasional one-frame gap between the cached cursor sample and the
+        // pointer actually visible on screen.
+        var currentX =
+            _cursorX;
+        var currentY =
+            _cursorY;
+
+        if (NativeMethods.GetCursorPos(
+                out var liveCursor) &&
+            bounds.Contains(
+                liveCursor.X,
+                liveCursor.Y))
+        {
+            currentX =
+                liveCursor.X -
+                bounds.Left;
+            currentY =
+                liveCursor.Y -
+                bounds.Top;
+        }
+
+        // Only the current pointer gets the small safety margin. The trail,
+        // interaction rectangles and tracked zones keep their 4.8.6 sizes.
+        var currentRadius =
+            Math.Max(
+                baseRadius,
+                22.0);
+
         result.Add(
             CreateMouseReveal(
-                _cursorX,
-                _cursorY,
-                baseRadius,
+                currentX,
+                currentY,
+                currentRadius,
                 bounds));
 
         if (_mouseSuppressed)

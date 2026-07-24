@@ -10,7 +10,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>OledGuard</AssemblyName>
     <RootNamespace>OledGuard</RootNamespace>
-    <Version>4.8.7</Version>
+    <Version>4.8.8</Version>
     <Product>OledGuard</Product>
     <Description>Protection OLED propre par zones actives stables et rendu vectoriel.</Description>
     <Authors>OledGuard contributors</Authors>

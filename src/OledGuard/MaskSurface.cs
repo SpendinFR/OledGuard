@@ -240,7 +240,7 @@ internal sealed class MaskSurface : FrameworkElement
                     1.0) *
                 ActualHeight);
 
-        const double seamBleed = 0.5;
+        const double seamBleed = 1.0;
         left = Math.Max(0.0, left - seamBleed);
         top = Math.Max(0.0, top - seamBleed);
         right = Math.Min(ActualWidth, right + seamBleed);
