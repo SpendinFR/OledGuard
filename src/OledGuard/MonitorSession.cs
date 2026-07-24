@@ -196,9 +196,6 @@ internal sealed partial class MonitorSession : IDisposable
     public bool ExcludedFromCapture =>
         _overlay.ExcludedFromCapture;
 
-    public string ScreenDeviceName =>
-        _screen.DeviceName;
-
     public void Start(
         bool enabled)
     {
@@ -234,7 +231,6 @@ internal sealed partial class MonitorSession : IDisposable
 
             _detectedRegions.Clear();
             _trackedRegions.Clear();
-            ResetInteractionAssistance();
             ResetMouseVisual();
 
             Array.Clear(
@@ -393,13 +389,6 @@ internal sealed partial class MonitorSession : IDisposable
             BuildDetectedRegions();
             MergeNearbyDetectedRegions();
 
-            if (UpdateInteractionAssistance(
-                    current,
-                    now))
-            {
-                _maskDirty = true;
-            }
-
             if (IsLargeSceneChange())
             {
                 ResetSceneToBaseline(
@@ -466,7 +455,6 @@ internal sealed partial class MonitorSession : IDisposable
     {
         _trackedRegions.Clear();
         _detectedRegions.Clear();
-        ResetInteractionAssistance();
         ResetMouseVisual();
 
         if (revealForeground)
@@ -1853,16 +1841,8 @@ internal sealed partial class MonitorSession : IDisposable
 
         lock (_sync)
         {
-            // Pointer guarantees are evaluated first so title-bar and shell
-            // controls become clear before the mouse and fade states render.
-            var pointerChanged =
-                UpdatePointerControlReveal(
-                    now);
             var visualChanged =
                 UpdateRegionVisualStates(
-                    now);
-            var interactionChanged =
-                UpdateInteractionVisualStates(
                     now);
             var mouseChanged =
                 UpdateMouseVisual(
@@ -1879,9 +1859,7 @@ internal sealed partial class MonitorSession : IDisposable
 
             shouldPush =
                 _maskDirty ||
-                pointerChanged ||
                 visualChanged ||
-                interactionChanged ||
                 mouseChanged ||
                 revealAllExpired;
 
@@ -1921,22 +1899,15 @@ internal sealed partial class MonitorSession : IDisposable
         var localY =
             cursor.Y -
             bounds.Top;
-        var suppressed =
+        var suppressTrail =
             IsPointInsideClearRegion(
                 localX,
                 localY);
-
-        if (suppressed)
-        {
-            var changed =
-                !_mouseSuppressed ||
-                _hasCursor ||
-                _mouseTrail.Count > 0;
-
-            ResetMouseVisual();
-            _mouseSuppressed = true;
-            return changed;
-        }
+        var suppressionChanged =
+            _mouseSuppressed !=
+            suppressTrail;
+        _mouseSuppressed =
+            suppressTrail;
 
         var changedPosition =
             !_hasCursor ||
@@ -1946,8 +1917,6 @@ internal sealed partial class MonitorSession : IDisposable
             Math.Abs(
                 localY -
                 _cursorY) >= 0.5;
-
-        _mouseSuppressed = false;
 
         if (!_hasCursor)
         {
@@ -1962,13 +1931,20 @@ internal sealed partial class MonitorSession : IDisposable
 
         if (changedPosition)
         {
-            AddInterpolatedMouseSamples(
-                _cursorX,
-                _cursorY,
-                localX,
-                localY,
-                _lastCursorTicks,
-                now);
+            if (_mouseSuppressed)
+            {
+                _mouseTrail.Clear();
+            }
+            else
+            {
+                AddInterpolatedMouseSamples(
+                    _cursorX,
+                    _cursorY,
+                    localX,
+                    localY,
+                    _lastCursorTicks,
+                    now);
+            }
 
             _lastCursorX =
                 _cursorX;
@@ -1982,12 +1958,24 @@ internal sealed partial class MonitorSession : IDisposable
                 now;
         }
 
+        var clearedSuppressedTrail =
+            false;
+
+        if (_mouseSuppressed &&
+            _mouseTrail.Count > 0)
+        {
+            _mouseTrail.Clear();
+            clearedSuppressedTrail = true;
+        }
+
         var trailChanged =
             PruneMouseTrail(now);
 
-        // Existing trail samples keep shrinking for their very short life,
-        // so the vector surface must be refreshed while any are present.
-        return changedPosition ||
+        // The current cursor reveal remains visible over partial controls.
+        // Only the decorative trail is suppressed inside an existing hole.
+        return suppressionChanged ||
+               changedPosition ||
+               clearedSuppressedTrail ||
                trailChanged ||
                _mouseTrail.Count > 0;
     }
@@ -2142,9 +2130,7 @@ internal sealed partial class MonitorSession : IDisposable
             }
         }
 
-        return IsPointInsideSupplementalReveal(
-            row,
-            column);
+        return false;
     }
 
     private bool ResetMouseVisual()
@@ -2254,16 +2240,8 @@ internal sealed partial class MonitorSession : IDisposable
                     opacity));
         }
 
-        AppendSupplementalMaskRegions(
-            result,
-            dimSteps,
-            maximumOpacity);
-
-        // One canonical render pass removes internal dark bands between
-        // fragments belonging to the same active menu, panel or control.
-        CoalesceProductionMaskRegions(
-            result,
-            maximumOpacity);
+        AppendManualRevealZones(
+            result);
 
         return result;
     }
@@ -2275,24 +2253,39 @@ internal sealed partial class MonitorSession : IDisposable
             new List<MouseReveal>();
 
         if (!_settings.MouseVisualEnabled ||
-            !_hasCursor ||
-            _mouseSuppressed)
+            !_hasCursor)
         {
             return result;
         }
 
         var bounds =
             _screen.Bounds;
-        var baseRadius =
+        var trailBaseRadius =
             _settings
                 .MouseVisualRadiusPixels;
+        var scaleAwareMinimumRadius =
+            Math.Clamp(
+                24.0 *
+                bounds.Height /
+                1_080.0,
+                28.0,
+                48.0);
+        var currentRadius =
+            Math.Max(
+                trailBaseRadius,
+                scaleAwareMinimumRadius);
 
         result.Add(
             CreateMouseReveal(
                 _cursorX,
                 _cursorY,
-                baseRadius,
+                currentRadius,
                 bounds));
+
+        if (_mouseSuppressed)
+        {
+            return result;
+        }
 
         var lifetimeMilliseconds =
             _settings
@@ -2328,7 +2321,7 @@ internal sealed partial class MonitorSession : IDisposable
                 age /
                 (double)lifetimeTicks;
             var radius =
-                baseRadius *
+                trailBaseRadius *
                 (0.35 +
                  0.65 *
                  life);

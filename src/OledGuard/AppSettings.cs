@@ -5,7 +5,7 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 47;
+    public const int CurrentSchemaVersion = 48;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
@@ -19,7 +19,7 @@ public sealed class AppSettings
     public int MotionZonePixelThreshold { get; set; } = 8;
     public double MotionZoneChangedFraction { get; set; } = 0.08;
 
-    public int MotionZonePaddingCells { get; set; } = 1;
+    public int MotionZonePaddingCells { get; set; } = 2;
     public int MotionZoneMinimumMotionCells { get; set; } = 2;
     public int MotionZoneMinimumVisibleAreaCells { get; set; } = 4;
     public int MotionZoneMinimumOutputAreaPixels { get; set; } = 90;
@@ -44,12 +44,6 @@ public sealed class AppSettings
 
     public int ForegroundWindowRevealMilliseconds { get; set; } = 3_000;
     public int ForegroundWindowFadeMilliseconds { get; set; } = 500;
-
-    public bool InteractionAssistEnabled { get; set; } = true;
-    public int InteractionAssistWeakPixelThreshold { get; set; } = 6;
-    public int InteractionAssistCompletionMilliseconds { get; set; } = 100;
-    public int InteractionAssistHoldMilliseconds { get; set; } = 3_000;
-    public int InteractionAssistFadeMilliseconds { get; set; } = 300;
 
     public bool MouseVisualEnabled { get; set; } = true;
     public int MouseVisualRadiusPixels { get; set; } = 18;
@@ -184,29 +178,17 @@ public sealed class AppSettings
             }
         }
 
-        if (SchemaVersion < 46)
+        if (SchemaVersion < 48)
         {
-            // Upgrade only the previous stock value. A custom reveal duration
-            // remains untouched.
+            // Upgrade only former stock values. Explicit user choices remain.
+            if (MotionZonePaddingCells == 1)
+            {
+                MotionZonePaddingCells = 2;
+            }
+
             if (ForegroundWindowRevealMilliseconds == 1_500)
             {
                 ForegroundWindowRevealMilliseconds = 3_000;
-            }
-
-            InteractionAssistEnabled = true;
-            InteractionAssistWeakPixelThreshold = 6;
-            InteractionAssistCompletionMilliseconds = 60;
-            InteractionAssistHoldMilliseconds = 3_000;
-            InteractionAssistFadeMilliseconds = 300;
-        }
-
-        if (SchemaVersion < 47)
-        {
-            // Rendering is still immediate. This only gives slow Windows fades
-            // enough time to complete the already-visible solid control bounds.
-            if (InteractionAssistCompletionMilliseconds == 60)
-            {
-                InteractionAssistCompletionMilliseconds = 100;
             }
         }
 
@@ -250,11 +232,6 @@ public sealed class AppSettings
 
         ForegroundWindowRevealMilliseconds = Math.Clamp(ForegroundWindowRevealMilliseconds, 400, 5_000);
         ForegroundWindowFadeMilliseconds = Math.Clamp(ForegroundWindowFadeMilliseconds, 100, 2_000);
-
-        InteractionAssistWeakPixelThreshold = Math.Clamp(InteractionAssistWeakPixelThreshold, 4, MotionZonePixelThreshold);
-        InteractionAssistCompletionMilliseconds = Math.Clamp(InteractionAssistCompletionMilliseconds, 20, 120);
-        InteractionAssistHoldMilliseconds = Math.Clamp(InteractionAssistHoldMilliseconds, 500, 8_000);
-        InteractionAssistFadeMilliseconds = Math.Clamp(InteractionAssistFadeMilliseconds, 80, 2_000);
 
         MouseVisualRadiusPixels = Math.Clamp(MouseVisualRadiusPixels, 8, 48);
         MouseTrailMilliseconds = Math.Clamp(MouseTrailMilliseconds, 0, 250);
