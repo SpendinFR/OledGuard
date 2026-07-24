@@ -1,9 +1,12 @@
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using FormsScreen = System.Windows.Forms.Screen;
+using WpfCursors = System.Windows.Input.Cursors;
+using WpfKey = System.Windows.Input.Key;
+using WpfMouseButtonEventArgs = System.Windows.Input.MouseButtonEventArgs;
+using WpfMouseEventArgs = System.Windows.Input.MouseEventArgs;
 
 namespace OledGuard;
 
@@ -36,7 +39,7 @@ internal sealed class ManualZoneSelectionWindow : Window
                     0));
         ShowInTaskbar = false;
         Topmost = true;
-        Cursor = Cursors.Cross;
+        Cursor = WpfCursors.Cross;
         Title =
             "OledGuard — Dessiner une zone visible";
 
@@ -123,7 +126,7 @@ internal sealed class ManualZoneSelectionWindow : Window
             (_, eventArgs) =>
             {
                 if (eventArgs.Key ==
-                    Key.Escape)
+                    WpfKey.Escape)
                 {
                     eventArgs.Handled = true;
                     CancelSelection();
@@ -162,7 +165,7 @@ internal sealed class ManualZoneSelectionWindow : Window
 
     private void OnMouseLeftButtonDown(
         object sender,
-        MouseButtonEventArgs eventArgs)
+        WpfMouseButtonEventArgs eventArgs)
     {
         if (!NativeMethods.GetCursorPos(
                 out _start))
@@ -181,7 +184,7 @@ internal sealed class ManualZoneSelectionWindow : Window
 
     private void OnMouseMove(
         object sender,
-        MouseEventArgs eventArgs)
+        WpfMouseEventArgs eventArgs)
     {
         if (!_dragging ||
             !NativeMethods.GetCursorPos(
@@ -197,7 +200,7 @@ internal sealed class ManualZoneSelectionWindow : Window
 
     private void OnMouseLeftButtonUp(
         object sender,
-        MouseButtonEventArgs eventArgs)
+        WpfMouseButtonEventArgs eventArgs)
     {
         if (!_dragging ||
             !NativeMethods.GetCursorPos(
