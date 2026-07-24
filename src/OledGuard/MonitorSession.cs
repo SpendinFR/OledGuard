@@ -1853,6 +1853,11 @@ internal sealed partial class MonitorSession : IDisposable
 
         lock (_sync)
         {
+            // Pointer guarantees are evaluated first so title-bar and shell
+            // controls become clear before the mouse and fade states render.
+            var pointerChanged =
+                UpdatePointerControlReveal(
+                    now);
             var visualChanged =
                 UpdateRegionVisualStates(
                     now);
@@ -1874,6 +1879,7 @@ internal sealed partial class MonitorSession : IDisposable
 
             shouldPush =
                 _maskDirty ||
+                pointerChanged ||
                 visualChanged ||
                 interactionChanged ||
                 mouseChanged ||
@@ -2251,6 +2257,12 @@ internal sealed partial class MonitorSession : IDisposable
         AppendSupplementalMaskRegions(
             result,
             dimSteps,
+            maximumOpacity);
+
+        // One canonical render pass removes internal dark bands between
+        // fragments belonging to the same active menu, panel or control.
+        CoalesceProductionMaskRegions(
+            result,
             maximumOpacity);
 
         return result;

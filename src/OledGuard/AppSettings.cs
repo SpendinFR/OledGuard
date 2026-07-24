@@ -5,7 +5,7 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 46;
+    public const int CurrentSchemaVersion = 47;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
@@ -47,7 +47,7 @@ public sealed class AppSettings
 
     public bool InteractionAssistEnabled { get; set; } = true;
     public int InteractionAssistWeakPixelThreshold { get; set; } = 6;
-    public int InteractionAssistCompletionMilliseconds { get; set; } = 60;
+    public int InteractionAssistCompletionMilliseconds { get; set; } = 100;
     public int InteractionAssistHoldMilliseconds { get; set; } = 3_000;
     public int InteractionAssistFadeMilliseconds { get; set; } = 300;
 
@@ -198,6 +198,16 @@ public sealed class AppSettings
             InteractionAssistCompletionMilliseconds = 60;
             InteractionAssistHoldMilliseconds = 3_000;
             InteractionAssistFadeMilliseconds = 300;
+        }
+
+        if (SchemaVersion < 47)
+        {
+            // Rendering is still immediate. This only gives slow Windows fades
+            // enough time to complete the already-visible solid control bounds.
+            if (InteractionAssistCompletionMilliseconds == 60)
+            {
+                InteractionAssistCompletionMilliseconds = 100;
+            }
         }
 
         SchemaVersion = CurrentSchemaVersion;

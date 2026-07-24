@@ -1,21 +1,40 @@
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows;
 
 namespace OledGuard;
 
 internal sealed partial class MonitorSession
 {
+    private const uint GaRoot = 2;
+
     private sealed class InteractionRevealRegion
     {
         public int MinimumRow;
         public int MaximumRow;
         public int MinimumColumn;
         public int MaximumColumn;
-        public int SeedRow;
-        public int SeedColumn;
+        public long CreatedTicks;
         public long LastActivityTicks;
         public long CompletionUntilTicks;
         public int DimStep;
-        public byte[]? ReferenceFrame;
+        public bool IsPanel;
+
+        public int Width =>
+            MaximumColumn -
+            MinimumColumn +
+            1;
+
+        public int Height =>
+            MaximumRow -
+            MinimumRow +
+            1;
+
+        public int Area =>
+            Math.Max(
+                1,
+                Width *
+                Height);
     }
 
     private readonly List<InteractionRevealRegion>
@@ -23,9 +42,36 @@ internal sealed partial class MonitorSession
     private readonly List<Rect>
         _manualRevealZones = new();
 
-    private bool[]? _interactionWeakMotion;
-    private bool[]? _interactionVisited;
-    private int[]? _interactionQueue;
+    private InteractionRevealRegion?
+        _pointerControlReveal;
+    private byte[]?
+        _interactionReferenceFrame;
+    private long
+        _interactionReferenceUntilTicks;
+
+    private bool[]?
+        _interactionWeakMotion;
+    private bool[]?
+        _interactionVisited;
+    private int[]?
+        _interactionQueue;
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr WindowFromPoint(
+        NativeMethods.Point point);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetAncestor(
+        IntPtr window,
+        uint flags);
+
+    [DllImport(
+        "user32.dll",
+        CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(
+        IntPtr window,
+        StringBuilder className,
+        int maximumCharacters);
 
     public void SetManualRevealZones(
         IReadOnlyList<Rect> zones)
@@ -78,6 +124,8 @@ internal sealed partial class MonitorSession
     private void ResetInteractionAssistance()
     {
         _interactionRevealRegions.Clear();
+        _pointerControlReveal = null;
+        _interactionReferenceUntilTicks = 0;
     }
 
     private bool UpdateInteractionAssistance(
@@ -86,13 +134,12 @@ internal sealed partial class MonitorSession
     {
         if (!_settings.InteractionAssistEnabled)
         {
-            if (_interactionRevealRegions.Count == 0)
-            {
-                return false;
-            }
+            var changed =
+                _interactionRevealRegions.Count > 0 ||
+                _pointerControlReveal is not null;
 
-            _interactionRevealRegions.Clear();
-            return true;
+            ResetInteractionAssistance();
+            return changed;
         }
 
         var changed =
@@ -104,15 +151,37 @@ internal sealed partial class MonitorSession
                  _detectedRegions)
         {
             if (!IsInteractionSeed(
-                    detected))
+                    detected,
+                    out var isPanel))
             {
                 continue;
             }
 
             if (ArmInteractionReveal(
                     detected,
+                    isPanel,
                     now))
             {
+                changed = true;
+            }
+        }
+
+        if (_interactionRevealRegions.Count > 6)
+        {
+            var excess =
+                _interactionRevealRegions.Count -
+                6;
+
+            foreach (var oldest in
+                     _interactionRevealRegions
+                         .OrderBy(
+                             region =>
+                                 region.LastActivityTicks)
+                         .Take(excess)
+                         .ToArray())
+            {
+                _interactionRevealRegions.Remove(
+                    oldest);
                 changed = true;
             }
         }
@@ -121,11 +190,14 @@ internal sealed partial class MonitorSession
     }
 
     private bool IsInteractionSeed(
-        DetectedRegion detected)
+        DetectedRegion detected,
+        out bool isPanel)
     {
+        isPanel = false;
+
         if (!IsCursorNearDetectedRegion(
                 detected,
-                36))
+                44))
         {
             return false;
         }
@@ -147,124 +219,142 @@ internal sealed partial class MonitorSession
         var areaPixels =
             widthPixels *
             heightPixels;
-        var screenArea =
-            Math.Max(
-                1.0,
-                (double)bounds.Width *
-                bounds.Height);
-        var compactLimit =
-            Math.Max(
-                22_000.0,
-                screenArea *
-                0.006);
-        var compact =
-            areaPixels <= compactLimit &&
-            Math.Max(
-                widthPixels,
-                heightPixels) <= 260.0;
-        var thinControl =
+        var minimumDimension =
             Math.Min(
                 widthPixels,
-                heightPixels) <= 52.0 &&
-            areaPixels <= 90_000.0;
+                heightPixels);
+        var maximumDimension =
+            Math.Max(
+                widthPixels,
+                heightPixels);
+
+        var compact =
+            areaPixels <= 36_000.0 &&
+            maximumDimension <= 360.0 &&
+            minimumDimension <= 190.0;
+
+        // Menus, flyouts and list panels often arrive as several separated
+        // text/icon components. Accept a bounded panel around the cursor so
+        // those components can be consolidated into one solid visual region.
+        var panel =
+            widthPixels <= 760.0 &&
+            heightPixels <= 1_000.0 &&
+            minimumDimension <= 420.0 &&
+            areaPixels <= 280_000.0;
+
+        isPanel =
+            panel &&
+            !compact;
 
         return compact ||
-               thinControl;
+               panel;
     }
 
     private bool ArmInteractionReveal(
         DetectedRegion detected,
+        bool isPanel,
         long now)
     {
         var candidate =
             CreateImmediateInteractionBounds(
-                detected);
+                detected,
+                isPanel);
         var completionTicks =
             ToStopwatchTicks(
                 _settings
                     .InteractionAssistCompletionMilliseconds);
 
+        EnsureInteractionReferenceSnapshot(
+            now,
+            completionTicks);
+
+        InteractionRevealRegion? best =
+            null;
+        var bestScore =
+            double.NegativeInfinity;
+        var recentTicks =
+            ToStopwatchTicks(
+                180);
+
         foreach (var existing in
                  _interactionRevealRegions)
         {
-            if (!RectanglesNear(
-                    existing.MinimumRow,
-                    existing.MaximumRow,
-                    existing.MinimumColumn,
-                    existing.MaximumColumn,
-                    candidate.MinimumRow,
-                    candidate.MaximumRow,
-                    candidate.MinimumColumn,
-                    candidate.MaximumColumn,
-                    2))
+            if (now -
+                    existing.LastActivityTicks >
+                recentTicks)
             {
                 continue;
             }
 
-            var changed =
-                existing.MinimumRow !=
-                    Math.Min(
-                        existing.MinimumRow,
-                        candidate.MinimumRow) ||
-                existing.MaximumRow !=
-                    Math.Max(
-                        existing.MaximumRow,
-                        candidate.MaximumRow) ||
-                existing.MinimumColumn !=
-                    Math.Min(
-                        existing.MinimumColumn,
-                        candidate.MinimumColumn) ||
-                existing.MaximumColumn !=
-                    Math.Max(
-                        existing.MaximumColumn,
-                        candidate.MaximumColumn) ||
-                existing.DimStep != 0;
-
-            existing.MinimumRow =
-                Math.Min(
-                    existing.MinimumRow,
-                    candidate.MinimumRow);
-            existing.MaximumRow =
-                Math.Max(
-                    existing.MaximumRow,
-                    candidate.MaximumRow);
-            existing.MinimumColumn =
-                Math.Min(
-                    existing.MinimumColumn,
-                    candidate.MinimumColumn);
-            existing.MaximumColumn =
-                Math.Max(
-                    existing.MaximumColumn,
-                    candidate.MaximumColumn);
-            existing.LastActivityTicks =
-                now;
-            existing.DimStep = 0;
-
-            // Keep the first pre-animation frame fixed during the short
-            // completion window. Replacing it every 20 ms would lose the
-            // accumulated fade that this layer is meant to recover.
-            if (existing.ReferenceFrame is null ||
-                now >
-                    existing.CompletionUntilTicks)
+            if (!TryGetMergedInteractionBounds(
+                    existing,
+                    candidate,
+                    isPanel,
+                    out var mergedMinimumRow,
+                    out var mergedMaximumRow,
+                    out var mergedMinimumColumn,
+                    out var mergedMaximumColumn,
+                    out var score))
             {
-                existing.CompletionUntilTicks =
-                    now +
-                    completionTicks;
-                existing.ReferenceFrame =
-                    ClonePreviousFrame();
+                continue;
             }
 
-            return changed;
+            if (score >
+                bestScore)
+            {
+                best = existing;
+                bestScore = score;
+            }
         }
 
-        var centerRow =
-            (candidate.MinimumRow +
-             candidate.MaximumRow) /
-            2;
-        var centerColumn =
-            (candidate.MinimumColumn +
-             candidate.MaximumColumn) /
-            2;
+        if (best is not null)
+        {
+            var changed =
+                best.MinimumRow !=
+                    Math.Min(
+                        best.MinimumRow,
+                        candidate.MinimumRow) ||
+                best.MaximumRow !=
+                    Math.Max(
+                        best.MaximumRow,
+                        candidate.MaximumRow) ||
+                best.MinimumColumn !=
+                    Math.Min(
+                        best.MinimumColumn,
+                        candidate.MinimumColumn) ||
+                best.MaximumColumn !=
+                    Math.Max(
+                        best.MaximumColumn,
+                        candidate.MaximumColumn) ||
+                best.DimStep != 0;
+
+            best.MinimumRow =
+                Math.Min(
+                    best.MinimumRow,
+                    candidate.MinimumRow);
+            best.MaximumRow =
+                Math.Max(
+                    best.MaximumRow,
+                    candidate.MaximumRow);
+            best.MinimumColumn =
+                Math.Min(
+                    best.MinimumColumn,
+                    candidate.MinimumColumn);
+            best.MaximumColumn =
+                Math.Max(
+                    best.MaximumColumn,
+                    candidate.MaximumColumn);
+            best.IsPanel =
+                best.IsPanel ||
+                isPanel;
+            best.LastActivityTicks =
+                now;
+            best.CompletionUntilTicks =
+                now +
+                completionTicks;
+            best.DimStep = 0;
+            return changed;
+        }
 
         _interactionRevealRegions.Add(
             new InteractionRevealRegion
@@ -277,42 +367,241 @@ internal sealed partial class MonitorSession
                     candidate.MinimumColumn,
                 MaximumColumn =
                     candidate.MaximumColumn,
-                SeedRow = centerRow,
-                SeedColumn = centerColumn,
+                CreatedTicks = now,
                 LastActivityTicks = now,
                 CompletionUntilTicks =
                     now +
                     completionTicks,
                 DimStep = 0,
-                ReferenceFrame =
-                    ClonePreviousFrame()
+                IsPanel = isPanel
             });
 
-        if (_interactionRevealRegions.Count > 8)
+        return true;
+    }
+
+    private bool TryGetMergedInteractionBounds(
+        InteractionRevealRegion existing,
+        DetectedRegion candidate,
+        bool candidateIsPanel,
+        out int minimumRow,
+        out int maximumRow,
+        out int minimumColumn,
+        out int maximumColumn,
+        out double score)
+    {
+        minimumRow =
+            Math.Min(
+                existing.MinimumRow,
+                candidate.MinimumRow);
+        maximumRow =
+            Math.Max(
+                existing.MaximumRow,
+                candidate.MaximumRow);
+        minimumColumn =
+            Math.Min(
+                existing.MinimumColumn,
+                candidate.MinimumColumn);
+        maximumColumn =
+            Math.Max(
+                existing.MaximumColumn,
+                candidate.MaximumColumn);
+        score =
+            double.NegativeInfinity;
+
+        var rowOverlap =
+            OverlapLength(
+                existing.MinimumRow,
+                existing.MaximumRow,
+                candidate.MinimumRow,
+                candidate.MaximumRow);
+        var columnOverlap =
+            OverlapLength(
+                existing.MinimumColumn,
+                existing.MaximumColumn,
+                candidate.MinimumColumn,
+                candidate.MaximumColumn);
+        var rowGap =
+            AxisGap(
+                existing.MinimumRow,
+                existing.MaximumRow,
+                candidate.MinimumRow,
+                candidate.MaximumRow);
+        var columnGap =
+            AxisGap(
+                existing.MinimumColumn,
+                existing.MaximumColumn,
+                candidate.MinimumColumn,
+                candidate.MaximumColumn);
+        var rowAlignment =
+            rowOverlap /
+            (double)Math.Max(
+                1,
+                Math.Min(
+                    existing.Height,
+                    candidate.Height));
+        var columnAlignment =
+            columnOverlap /
+            (double)Math.Max(
+                1,
+                Math.Min(
+                    existing.Width,
+                    candidate.Width));
+
+        var bounds =
+            _screen.Bounds;
+        var compactGapColumns =
+            Math.Max(
+                1,
+                (int)Math.Ceiling(
+                    12.0 *
+                    _columns /
+                    Math.Max(
+                        1.0,
+                        bounds.Width)));
+        var compactGapRows =
+            Math.Max(
+                1,
+                (int)Math.Ceiling(
+                    10.0 *
+                    _rows /
+                    Math.Max(
+                        1.0,
+                        bounds.Height)));
+        var panelGapColumns =
+            Math.Max(
+                compactGapColumns,
+                (int)Math.Ceiling(
+                    76.0 *
+                    _columns /
+                    Math.Max(
+                        1.0,
+                        bounds.Width)));
+        var panelGapRows =
+            Math.Max(
+                compactGapRows,
+                (int)Math.Ceiling(
+                    40.0 *
+                    _rows /
+                    Math.Max(
+                        1.0,
+                        bounds.Height)));
+
+        var panelRelation =
+            existing.IsPanel ||
+            candidateIsPanel;
+        var horizontallyRelated =
+            rowAlignment >=
+                (panelRelation
+                    ? 0.45
+                    : 0.70) &&
+            columnGap <=
+                (panelRelation
+                    ? panelGapColumns
+                    : compactGapColumns);
+        var verticallyRelated =
+            columnAlignment >=
+                (panelRelation
+                    ? 0.62
+                    : 0.78) &&
+            rowGap <=
+                (panelRelation
+                    ? panelGapRows
+                    : compactGapRows);
+
+        if (!horizontallyRelated &&
+            !verticallyRelated)
         {
-            var oldest =
-                _interactionRevealRegions
-                    .OrderBy(
-                        region =>
-                            region.LastActivityTicks)
-                    .First();
-            _interactionRevealRegions.Remove(
-                oldest);
+            return false;
         }
+
+        var existingArea =
+            Math.Max(
+                1,
+                existing.Area);
+        var candidateArea =
+            Math.Max(
+                1,
+                candidate.Area);
+        var intersection =
+            IntersectionArea(
+                existing.MinimumRow,
+                existing.MaximumRow,
+                existing.MinimumColumn,
+                existing.MaximumColumn,
+                candidate.MinimumRow,
+                candidate.MaximumRow,
+                candidate.MinimumColumn,
+                candidate.MaximumColumn);
+        var occupiedArea =
+            existingArea +
+            candidateArea -
+            intersection;
+        var unionArea =
+            RectangleArea(
+                minimumRow,
+                maximumRow,
+                minimumColumn,
+                maximumColumn);
+        var inflationLimit =
+            panelRelation
+                ? 2.35
+                : 1.50;
+
+        if (unionArea >
+            Math.Max(
+                1,
+                occupiedArea) *
+            inflationLimit)
+        {
+            return false;
+        }
+
+        if (!CanUseInteractionBounds(
+                panelRelation,
+                minimumRow,
+                maximumRow,
+                minimumColumn,
+                maximumColumn,
+                Math.Max(
+                    existingArea,
+                    candidateArea)))
+        {
+            return false;
+        }
+
+        score =
+            rowAlignment *
+                300.0 +
+            columnAlignment *
+                300.0 -
+            rowGap *
+                20.0 -
+            columnGap *
+                20.0 -
+            unionArea /
+                (double)Math.Max(
+                    1,
+                    occupiedArea) *
+                50.0;
 
         return true;
     }
 
     private DetectedRegion CreateImmediateInteractionBounds(
-        DetectedRegion detected)
+        DetectedRegion detected,
+        bool isPanel)
     {
         var bounds =
             _screen.Bounds;
+        var paddingPixels =
+            isPanel
+                ? 14.0
+                : 18.0;
         var paddingColumns =
             Math.Max(
                 1,
                 (int)Math.Ceiling(
-                    18.0 *
+                    paddingPixels *
                     _columns /
                     Math.Max(
                         1.0,
@@ -321,7 +610,7 @@ internal sealed partial class MonitorSession
             Math.Max(
                 1,
                 (int)Math.Ceiling(
-                    18.0 *
+                    paddingPixels *
                     _rows /
                     Math.Max(
                         1.0,
@@ -330,7 +619,7 @@ internal sealed partial class MonitorSession
             Math.Max(
                 1,
                 (int)Math.Ceiling(
-                    58.0 *
+                    88.0 *
                     _columns /
                     Math.Max(
                         1.0,
@@ -339,7 +628,7 @@ internal sealed partial class MonitorSession
             Math.Max(
                 1,
                 (int)Math.Ceiling(
-                    58.0 *
+                    68.0 *
                     _rows /
                     Math.Max(
                         1.0,
@@ -365,6 +654,56 @@ internal sealed partial class MonitorSession
                 _columns - 1,
                 detected.MaximumColumn +
                 paddingColumns);
+
+        // A low-contrast hover animation may start on only one edge of an
+        // icon or close button. For compact controls, include a cursor-centred
+        // guarantee immediately; the user never sees a half control while the
+        // temporal completion continues in the background.
+        if (!isPanel &&
+            TryGetCursorCell(
+                out var cursorRow,
+                out var cursorColumn))
+        {
+            var halfRows =
+                Math.Max(
+                    1,
+                    minimumRows /
+                    2);
+            var halfColumns =
+                Math.Max(
+                    1,
+                    minimumColumns /
+                    2);
+
+            minimumRow =
+                Math.Min(
+                    minimumRow,
+                    Math.Max(
+                        0,
+                        cursorRow -
+                        halfRows));
+            maximumRow =
+                Math.Max(
+                    maximumRow,
+                    Math.Min(
+                        _rows - 1,
+                        cursorRow +
+                        halfRows));
+            minimumColumn =
+                Math.Min(
+                    minimumColumn,
+                    Math.Max(
+                        0,
+                        cursorColumn -
+                        halfColumns));
+            maximumColumn =
+                Math.Max(
+                    maximumColumn,
+                    Math.Min(
+                        _columns - 1,
+                        cursorColumn +
+                        halfColumns));
+        }
 
         ExpandToMinimumSize(
             ref minimumRow,
@@ -396,7 +735,8 @@ internal sealed partial class MonitorSession
             minimum +
             1;
 
-        if (currentSize >= targetSize)
+        if (currentSize >=
+            targetSize)
         {
             return;
         }
@@ -427,7 +767,8 @@ internal sealed partial class MonitorSession
             minimum +
             1;
 
-        if (currentSize >= targetSize)
+        if (currentSize >=
+            targetSize)
         {
             return;
         }
@@ -439,7 +780,8 @@ internal sealed partial class MonitorSession
                     limit - 1,
                     targetSize - 1);
         }
-        else if (maximum == limit - 1)
+        else if (maximum ==
+                 limit - 1)
         {
             minimum =
                 Math.Max(
@@ -449,43 +791,72 @@ internal sealed partial class MonitorSession
         }
     }
 
-    private byte[] ClonePreviousFrame()
+    private void EnsureInteractionReferenceSnapshot(
+        long now,
+        long completionTicks)
     {
-        var clone =
-            new byte[_previousFrame.Length];
+        if (_interactionReferenceFrame is null ||
+            _interactionReferenceFrame.Length !=
+                _previousFrame.Length)
+        {
+            _interactionReferenceFrame =
+                new byte[
+                    _previousFrame.Length];
+            _interactionReferenceUntilTicks = 0;
+        }
+
+        if (now <=
+            _interactionReferenceUntilTicks)
+        {
+            return;
+        }
+
         Buffer.BlockCopy(
             _previousFrame,
             0,
-            clone,
+            _interactionReferenceFrame,
             0,
-            clone.Length);
-        return clone;
+            _previousFrame.Length);
+        _interactionReferenceUntilTicks =
+            now +
+            completionTicks;
     }
 
     private bool CompleteInteractionReveals(
         byte[] current,
         long now)
     {
+        if (_interactionReferenceFrame is null ||
+            now >
+                _interactionReferenceUntilTicks)
+        {
+            return false;
+        }
+
         var changed = false;
+        var completed = 0;
 
         foreach (var reveal in
-                 _interactionRevealRegions)
+                 _interactionRevealRegions
+                     .Where(
+                         region =>
+                             now <=
+                             region.CompletionUntilTicks)
+                     .OrderByDescending(
+                         region =>
+                             region.LastActivityTicks))
         {
-            if (reveal.ReferenceFrame is null)
+            if (completed >= 2)
             {
-                continue;
+                break;
             }
 
-            if (now >
-                reveal.CompletionUntilTicks)
-            {
-                reveal.ReferenceFrame = null;
-                continue;
-            }
+            completed++;
 
             if (TryCompleteInteractionReveal(
                     reveal,
-                    current))
+                    current,
+                    _interactionReferenceFrame))
             {
                 reveal.LastActivityTicks =
                     now;
@@ -499,26 +870,31 @@ internal sealed partial class MonitorSession
 
     private bool TryCompleteInteractionReveal(
         InteractionRevealRegion reveal,
-        byte[] current)
+        byte[] current,
+        byte[] reference)
     {
         EnsureInteractionBuffers();
 
         var bounds =
             _screen.Bounds;
-        var horizontalRadius =
+        var expansionPixels =
+            reveal.IsPanel
+                ? 72.0
+                : 40.0;
+        var expansionColumns =
             Math.Max(
-                4,
+                2,
                 (int)Math.Ceiling(
-                    340.0 *
+                    expansionPixels *
                     _columns /
                     Math.Max(
                         1.0,
                         bounds.Width)));
-        var verticalRadius =
+        var expansionRows =
             Math.Max(
-                4,
+                2,
                 (int)Math.Ceiling(
-                    520.0 *
+                    expansionPixels *
                     _rows /
                     Math.Max(
                         1.0,
@@ -526,41 +902,46 @@ internal sealed partial class MonitorSession
         var searchMinimumRow =
             Math.Max(
                 0,
-                reveal.SeedRow -
-                verticalRadius);
+                reveal.MinimumRow -
+                expansionRows);
         var searchMaximumRow =
             Math.Min(
                 _rows - 1,
-                reveal.SeedRow +
-                verticalRadius);
+                reveal.MaximumRow +
+                expansionRows);
         var searchMinimumColumn =
             Math.Max(
                 0,
-                reveal.SeedColumn -
-                horizontalRadius);
+                reveal.MinimumColumn -
+                expansionColumns);
         var searchMaximumColumn =
             Math.Min(
                 _columns - 1,
-                reveal.SeedColumn +
-                horizontalRadius);
+                reveal.MaximumColumn +
+                expansionColumns);
 
-        for (var row = searchMinimumRow;
-             row <= searchMaximumRow;
+        for (var row =
+                 searchMinimumRow;
+             row <=
+                 searchMaximumRow;
              row++)
         {
-            for (var column = searchMinimumColumn;
-                 column <= searchMaximumColumn;
+            for (var column =
+                     searchMinimumColumn;
+                 column <=
+                     searchMaximumColumn;
                  column++)
             {
                 var index =
                     row *
                     _columns +
                     column;
-                _interactionVisited![index] = false;
+                _interactionVisited![index] =
+                    false;
                 _interactionWeakMotion![index] =
                     CellChangedAgainstReference(
                         current,
-                        reveal.ReferenceFrame!,
+                        reference,
                         row,
                         column,
                         _settings
@@ -570,7 +951,7 @@ internal sealed partial class MonitorSession
 
         var head = 0;
         var tail = 0;
-        var seedMargin = 2;
+        const int seedMargin = 1;
 
         for (var row =
                  Math.Max(
@@ -607,8 +988,10 @@ internal sealed partial class MonitorSession
                     continue;
                 }
 
-                _interactionVisited[index] = true;
-                _interactionQueue![tail++] = index;
+                _interactionVisited[index] =
+                    true;
+                _interactionQueue![tail++] =
+                    index;
             }
         }
 
@@ -627,7 +1010,8 @@ internal sealed partial class MonitorSession
             reveal.MaximumColumn;
         var visitedCells = 0;
 
-        while (head < tail)
+        while (head <
+               tail)
         {
             var index =
                 _interactionQueue![head++];
@@ -707,27 +1091,40 @@ internal sealed partial class MonitorSession
                         continue;
                     }
 
-                    _interactionVisited[neighbourIndex] = true;
-                    _interactionQueue![tail++] =
+                    _interactionVisited[
+                        neighbourIndex] =
+                        true;
+                    _interactionQueue![
+                        tail++] =
                         neighbourIndex;
                 }
             }
         }
 
-        if (visitedCells < 2 ||
-            !CanUseInteractionBounds(
-                minimumRow,
-                maximumRow,
-                minimumColumn,
-                maximumColumn))
+        if (visitedCells == 0)
         {
             return false;
         }
 
-        if (minimumRow == reveal.MinimumRow &&
-            maximumRow == reveal.MaximumRow &&
-            minimumColumn == reveal.MinimumColumn &&
-            maximumColumn == reveal.MaximumColumn)
+        if (minimumRow ==
+                reveal.MinimumRow &&
+            maximumRow ==
+                reveal.MaximumRow &&
+            minimumColumn ==
+                reveal.MinimumColumn &&
+            maximumColumn ==
+                reveal.MaximumColumn)
+        {
+            return false;
+        }
+
+        if (!CanUseInteractionBounds(
+                reveal.IsPanel,
+                minimumRow,
+                maximumRow,
+                minimumColumn,
+                maximumColumn,
+                reveal.Area))
         {
             return false;
         }
@@ -771,7 +1168,8 @@ internal sealed partial class MonitorSession
                         .MotionZoneChangedFraction));
 
         for (var sampleY = 0;
-             sampleY < _samplesPerCell;
+             sampleY <
+                _samplesPerCell;
              sampleY++)
         {
             var sourceRow =
@@ -782,7 +1180,8 @@ internal sealed partial class MonitorSession
                 _sampleStride;
 
             for (var sampleX = 0;
-                 sampleX < _samplesPerCell;
+                 sampleX <
+                    _samplesPerCell;
                  sampleX++)
             {
                 var sourceColumn =
@@ -860,10 +1259,12 @@ internal sealed partial class MonitorSession
     }
 
     private bool CanUseInteractionBounds(
+        bool isPanel,
         int minimumRow,
         int maximumRow,
         int minimumColumn,
-        int maximumColumn)
+        int maximumColumn,
+        int previousArea)
     {
         var bounds =
             _screen.Bounds;
@@ -891,25 +1292,351 @@ internal sealed partial class MonitorSession
                 1.0,
                 (double)bounds.Width *
                 bounds.Height);
-        var maximumArea =
-            Math.Max(
-                320_000.0,
-                screenArea *
-                0.04);
+        var areaCells =
+            RectangleArea(
+                minimumRow,
+                maximumRow,
+                minimumColumn,
+                maximumColumn);
+        var growthLimit =
+            isPanel
+                ? 2.35
+                : 1.95;
 
-        return widthPixels <= 720.0 &&
-               heightPixels <= 1_100.0 &&
-               areaPixels <= maximumArea;
+        if (areaCells >
+            Math.Max(
+                1,
+                previousArea) *
+            growthLimit)
+        {
+            return false;
+        }
+
+        if (isPanel)
+        {
+            return widthPixels <= 1_300.0 &&
+                   heightPixels <= 1_050.0 &&
+                   areaPixels <=
+                       Math.Max(
+                           520_000.0,
+                           screenArea *
+                           0.07);
+        }
+
+        return widthPixels <= 380.0 &&
+               heightPixels <= 280.0 &&
+               areaPixels <= 82_000.0;
+    }
+
+    private bool UpdatePointerControlReveal(
+        long now)
+    {
+        if (!_enabled ||
+            !_settings.InteractionAssistEnabled ||
+            !TryGetPointerControlBounds(
+                out var minimumRow,
+                out var maximumRow,
+                out var minimumColumn,
+                out var maximumColumn,
+                out var shellInteraction))
+        {
+            return false;
+        }
+
+        var foregroundIntroductionRemoved =
+            shellInteraction &&
+            _trackedRegions.RemoveAll(
+                region =>
+                    region.IsForegroundIntroduction) > 0;
+
+        if (_pointerControlReveal is null)
+        {
+            _pointerControlReveal =
+                new InteractionRevealRegion
+                {
+                    MinimumRow =
+                        minimumRow,
+                    MaximumRow =
+                        maximumRow,
+                    MinimumColumn =
+                        minimumColumn,
+                    MaximumColumn =
+                        maximumColumn,
+                    CreatedTicks = now,
+                    LastActivityTicks = now,
+                    CompletionUntilTicks = 0,
+                    DimStep = 0,
+                    IsPanel = false
+                };
+            return true;
+        }
+
+        var changed =
+            foregroundIntroductionRemoved ||
+            _pointerControlReveal.MinimumRow !=
+                minimumRow ||
+            _pointerControlReveal.MaximumRow !=
+                maximumRow ||
+            _pointerControlReveal.MinimumColumn !=
+                minimumColumn ||
+            _pointerControlReveal.MaximumColumn !=
+                maximumColumn ||
+            _pointerControlReveal.DimStep != 0;
+
+        _pointerControlReveal.MinimumRow =
+            minimumRow;
+        _pointerControlReveal.MaximumRow =
+            maximumRow;
+        _pointerControlReveal.MinimumColumn =
+            minimumColumn;
+        _pointerControlReveal.MaximumColumn =
+            maximumColumn;
+        _pointerControlReveal.LastActivityTicks =
+            now;
+        _pointerControlReveal.DimStep = 0;
+        return changed;
+    }
+
+    private bool TryGetPointerControlBounds(
+        out int minimumRow,
+        out int maximumRow,
+        out int minimumColumn,
+        out int maximumColumn,
+        out bool shellInteraction)
+    {
+        minimumRow = 0;
+        maximumRow = 0;
+        minimumColumn = 0;
+        maximumColumn = 0;
+        shellInteraction = false;
+
+        if (!NativeMethods.GetCursorPos(
+                out var cursor))
+        {
+            return false;
+        }
+
+        var screenBounds =
+            _screen.Bounds;
+
+        if (!screenBounds.Contains(
+                cursor.X,
+                cursor.Y))
+        {
+            return false;
+        }
+
+        var workingArea =
+            _screen.WorkingArea;
+        var shellArea =
+            !workingArea.Contains(
+                cursor.X,
+                cursor.Y) ||
+            IsShellInteractionWindowAtPoint(
+                cursor);
+        shellInteraction =
+            shellArea;
+        var edgeActivation =
+            cursor.X -
+                screenBounds.Left <= 6 ||
+            screenBounds.Right -
+                cursor.X <= 7 ||
+            cursor.Y -
+                screenBounds.Top <= 6 ||
+            screenBounds.Bottom -
+                cursor.Y <= 7;
+        var titleBar =
+            IsPointerInForegroundTitleBar(
+                cursor);
+
+        if (!shellArea &&
+            !edgeActivation &&
+            !titleBar)
+        {
+            return false;
+        }
+
+        var halfWidthPixels =
+            shellArea
+                ? 52.0
+                : 50.0;
+        var halfHeightPixels =
+            shellArea
+                ? 44.0
+                : 42.0;
+        var halfColumns =
+            Math.Max(
+                2,
+                (int)Math.Ceiling(
+                    halfWidthPixels *
+                    _columns /
+                    Math.Max(
+                        1.0,
+                        screenBounds.Width)));
+        var halfRows =
+            Math.Max(
+                2,
+                (int)Math.Ceiling(
+                    halfHeightPixels *
+                    _rows /
+                    Math.Max(
+                        1.0,
+                        screenBounds.Height)));
+        var cursorColumn =
+            Math.Clamp(
+                (cursor.X -
+                 screenBounds.Left) *
+                _columns /
+                Math.Max(
+                    1,
+                    screenBounds.Width),
+                0,
+                _columns - 1);
+        var cursorRow =
+            Math.Clamp(
+                (cursor.Y -
+                 screenBounds.Top) *
+                _rows /
+                Math.Max(
+                    1,
+                    screenBounds.Height),
+                0,
+                _rows - 1);
+
+        minimumRow =
+            Math.Max(
+                0,
+                cursorRow -
+                halfRows);
+        maximumRow =
+            Math.Min(
+                _rows - 1,
+                cursorRow +
+                halfRows);
+        minimumColumn =
+            Math.Max(
+                0,
+                cursorColumn -
+                halfColumns);
+        maximumColumn =
+            Math.Min(
+                _columns - 1,
+                cursorColumn +
+                halfColumns);
+
+        ExpandToMinimumSize(
+            ref minimumRow,
+            ref maximumRow,
+            halfRows *
+                2 +
+                1,
+            _rows);
+        ExpandToMinimumSize(
+            ref minimumColumn,
+            ref maximumColumn,
+            halfColumns *
+                2 +
+                1,
+            _columns);
+
+        return true;
+    }
+
+    private bool IsPointerInForegroundTitleBar(
+        NativeMethods.Point cursor)
+    {
+        var foregroundWindow =
+            GetForegroundWindow();
+
+        if (foregroundWindow ==
+                IntPtr.Zero ||
+            !GetWindowRect(
+                foregroundWindow,
+                out var rectangle))
+        {
+            return false;
+        }
+
+        if (cursor.X <
+                rectangle.Left ||
+            cursor.X >=
+                rectangle.Right ||
+            cursor.Y <
+                rectangle.Top ||
+            cursor.Y >=
+                rectangle.Bottom)
+        {
+            return false;
+        }
+
+        const int titleHeight = 72;
+
+        return cursor.Y -
+               rectangle.Top <=
+               titleHeight;
+    }
+
+    private static bool IsShellInteractionWindowAtPoint(
+        NativeMethods.Point cursor)
+    {
+        var window =
+            WindowFromPoint(
+                cursor);
+
+        if (window ==
+            IntPtr.Zero)
+        {
+            return false;
+        }
+
+        var root =
+            GetAncestor(
+                window,
+                GaRoot);
+
+        if (root !=
+            IntPtr.Zero)
+        {
+            window = root;
+        }
+
+        var className =
+            new StringBuilder(
+                128);
+
+        if (GetClassName(
+                window,
+                className,
+                className.Capacity) <= 0)
+        {
+            return false;
+        }
+
+        var value =
+            className.ToString();
+
+        return string.Equals(
+                   value,
+                   "Shell_TrayWnd",
+                   StringComparison.Ordinal) ||
+               string.Equals(
+                   value,
+                   "Shell_SecondaryTrayWnd",
+                   StringComparison.Ordinal) ||
+               value.Contains(
+                   "TaskList",
+                   StringComparison.OrdinalIgnoreCase) ||
+               value.Contains(
+                   "Taskbar",
+                   StringComparison.OrdinalIgnoreCase) ||
+               value.Contains(
+                   "Thumbnail",
+                   StringComparison.OrdinalIgnoreCase);
     }
 
     private bool UpdateInteractionVisualStates(
         long now)
     {
-        if (_interactionRevealRegions.Count == 0)
-        {
-            return false;
-        }
-
         var changed = false;
         var holdTicks =
             ToStopwatchTicks(
@@ -938,14 +1665,11 @@ internal sealed partial class MonitorSession
                 _interactionRevealRegions[index];
 
             if (hasCursor &&
-                cursorRow >=
-                    reveal.MinimumRow - 1 &&
-                cursorRow <=
-                    reveal.MaximumRow + 1 &&
-                cursorColumn >=
-                    reveal.MinimumColumn - 1 &&
-                cursorColumn <=
-                    reveal.MaximumColumn + 1)
+                IsCursorInsideInteractionReveal(
+                    reveal,
+                    cursorRow,
+                    cursorColumn,
+                    1))
             {
                 reveal.LastActivityTicks =
                     now;
@@ -959,57 +1683,126 @@ internal sealed partial class MonitorSession
                 continue;
             }
 
-            var elapsed =
-                now -
-                reveal.LastActivityTicks;
-
-            if (elapsed < holdTicks)
+            if (UpdateInteractionFade(
+                    reveal,
+                    now,
+                    holdTicks,
+                    fadeTicks,
+                    dimSteps,
+                    out var remove))
             {
-                if (reveal.DimStep != 0)
-                {
-                    reveal.DimStep = 0;
-                    changed = true;
-                }
-
-                continue;
+                changed = true;
             }
 
-            if (fadeTicks <= 0 ||
-                elapsed >=
-                    holdTicks +
-                    fadeTicks)
+            if (remove)
             {
                 _interactionRevealRegions.RemoveAt(
                     index);
+            }
+        }
+
+        if (_pointerControlReveal is not null)
+        {
+            if (UpdateInteractionFade(
+                    _pointerControlReveal,
+                    now,
+                    holdTicks,
+                    fadeTicks,
+                    dimSteps,
+                    out var removePointer))
+            {
                 changed = true;
-                continue;
             }
 
-            var fadeElapsed =
-                elapsed -
-                holdTicks;
-            var targetStep =
-                Math.Clamp(
-                    1 +
-                    (int)(
-                        fadeElapsed *
-                        dimSteps /
-                        Math.Max(
-                            1L,
-                            fadeTicks)),
-                    1,
-                    dimSteps);
-
-            if (targetStep !=
-                reveal.DimStep)
+            if (removePointer)
             {
-                reveal.DimStep =
-                    targetStep;
-                changed = true;
+                _pointerControlReveal =
+                    null;
             }
         }
 
         return changed;
+    }
+
+    private static bool IsCursorInsideInteractionReveal(
+        InteractionRevealRegion reveal,
+        int row,
+        int column,
+        int margin)
+    {
+        return row >=
+                   reveal.MinimumRow -
+                   margin &&
+               row <=
+                   reveal.MaximumRow +
+                   margin &&
+               column >=
+                   reveal.MinimumColumn -
+                   margin &&
+               column <=
+                   reveal.MaximumColumn +
+                   margin;
+    }
+
+    private static bool UpdateInteractionFade(
+        InteractionRevealRegion reveal,
+        long now,
+        long holdTicks,
+        long fadeTicks,
+        int dimSteps,
+        out bool remove)
+    {
+        remove = false;
+
+        var elapsed =
+            now -
+            reveal.LastActivityTicks;
+
+        if (elapsed <
+            holdTicks)
+        {
+            if (reveal.DimStep == 0)
+            {
+                return false;
+            }
+
+            reveal.DimStep = 0;
+            return true;
+        }
+
+        if (fadeTicks <= 0 ||
+            elapsed >=
+                holdTicks +
+                fadeTicks)
+        {
+            remove = true;
+            return true;
+        }
+
+        var fadeElapsed =
+            elapsed -
+            holdTicks;
+        var targetStep =
+            Math.Clamp(
+                1 +
+                (int)(
+                    fadeElapsed *
+                    dimSteps /
+                    Math.Max(
+                        1L,
+                        fadeTicks)),
+                1,
+                dimSteps);
+
+        if (targetStep ==
+            reveal.DimStep)
+        {
+            return false;
+        }
+
+        reveal.DimStep =
+            targetStep;
+        return true;
     }
 
     private bool TryGetCursorCell(
@@ -1063,37 +1856,23 @@ internal sealed partial class MonitorSession
         int dimSteps,
         double maximumOpacity)
     {
+        if (_pointerControlReveal is not null)
+        {
+            AppendInteractionMaskRegion(
+                result,
+                _pointerControlReveal,
+                dimSteps,
+                maximumOpacity);
+        }
+
         foreach (var reveal in
                  _interactionRevealRegions)
         {
-            var left =
-                reveal.MinimumColumn /
-                (double)_columns;
-            var top =
-                reveal.MinimumRow /
-                (double)_rows;
-            var right =
-                (reveal.MaximumColumn + 1) /
-                (double)_columns;
-            var bottom =
-                (reveal.MaximumRow + 1) /
-                (double)_rows;
-            var opacity =
-                maximumOpacity *
-                Math.Clamp(
-                    reveal.DimStep,
-                    0,
-                    dimSteps) /
-                dimSteps;
-
-            result.Add(
-                new MaskRegion(
-                    new Rect(
-                        left,
-                        top,
-                        right - left,
-                        bottom - top),
-                    opacity));
+            AppendInteractionMaskRegion(
+                result,
+                reveal,
+                dimSteps,
+                maximumOpacity);
         }
 
         foreach (var manual in
@@ -1106,18 +1885,414 @@ internal sealed partial class MonitorSession
         }
     }
 
+    private void AppendInteractionMaskRegion(
+        List<MaskRegion> result,
+        InteractionRevealRegion reveal,
+        int dimSteps,
+        double maximumOpacity)
+    {
+        var left =
+            reveal.MinimumColumn /
+            (double)_columns;
+        var top =
+            reveal.MinimumRow /
+            (double)_rows;
+        var right =
+            (reveal.MaximumColumn + 1) /
+            (double)_columns;
+        var bottom =
+            (reveal.MaximumRow + 1) /
+            (double)_rows;
+        var opacity =
+            maximumOpacity *
+            Math.Clamp(
+                reveal.DimStep,
+                0,
+                dimSteps) /
+            dimSteps;
+
+        result.Add(
+            new MaskRegion(
+                new Rect(
+                    left,
+                    top,
+                    right - left,
+                    bottom - top),
+                opacity));
+    }
+
+    private void CoalesceProductionMaskRegions(
+        List<MaskRegion> regions,
+        double maximumOpacity)
+    {
+        if (regions.Count < 2)
+        {
+            return;
+        }
+
+        var merged = true;
+
+        while (merged)
+        {
+            merged = false;
+
+            for (var firstIndex = 0;
+                 firstIndex <
+                    regions.Count;
+                 firstIndex++)
+            {
+                for (var secondIndex =
+                         firstIndex + 1;
+                     secondIndex <
+                        regions.Count;
+                     secondIndex++)
+                {
+                    if (!TryMergeProductionMaskRegions(
+                            regions[firstIndex],
+                            regions[secondIndex],
+                            maximumOpacity,
+                            out var combined))
+                    {
+                        continue;
+                    }
+
+                    regions[firstIndex] =
+                        combined;
+                    regions.RemoveAt(
+                        secondIndex);
+                    merged = true;
+                    break;
+                }
+
+                if (merged)
+                {
+                    break;
+                }
+            }
+        }
+    }
+
+    private bool TryMergeProductionMaskRegions(
+        MaskRegion first,
+        MaskRegion second,
+        double maximumOpacity,
+        out MaskRegion combined)
+    {
+        combined = first;
+
+        if (first.Opacity >=
+                maximumOpacity -
+                0.0001 ||
+            second.Opacity >=
+                maximumOpacity -
+                0.0001)
+        {
+            return false;
+        }
+
+        var opacityDifference =
+            Math.Abs(
+                first.Opacity -
+                second.Opacity);
+        var opacityTolerance =
+            maximumOpacity /
+            Math.Max(
+                2,
+                _settings.MotionZoneDimSteps) +
+            0.0001;
+
+        if (opacityDifference >
+            opacityTolerance)
+        {
+            return false;
+        }
+
+        var firstBounds =
+            first.NormalizedBounds;
+        var secondBounds =
+            second.NormalizedBounds;
+
+        if (opacityDifference <= 0.0001 &&
+            firstBounds.Contains(
+                secondBounds))
+        {
+            combined = first;
+            return true;
+        }
+
+        if (opacityDifference <= 0.0001 &&
+            secondBounds.Contains(
+                firstBounds))
+        {
+            combined = second;
+            return true;
+        }
+
+        var screenBounds =
+            _screen.Bounds;
+        var firstLeft =
+            firstBounds.Left *
+            screenBounds.Width;
+        var firstTop =
+            firstBounds.Top *
+            screenBounds.Height;
+        var firstRight =
+            firstBounds.Right *
+            screenBounds.Width;
+        var firstBottom =
+            firstBounds.Bottom *
+            screenBounds.Height;
+        var secondLeft =
+            secondBounds.Left *
+            screenBounds.Width;
+        var secondTop =
+            secondBounds.Top *
+            screenBounds.Height;
+        var secondRight =
+            secondBounds.Right *
+            screenBounds.Width;
+        var secondBottom =
+            secondBounds.Bottom *
+            screenBounds.Height;
+        var firstWidth =
+            Math.Max(
+                1.0,
+                firstRight -
+                firstLeft);
+        var firstHeight =
+            Math.Max(
+                1.0,
+                firstBottom -
+                firstTop);
+        var secondWidth =
+            Math.Max(
+                1.0,
+                secondRight -
+                secondLeft);
+        var secondHeight =
+            Math.Max(
+                1.0,
+                secondBottom -
+                secondTop);
+        var horizontalOverlap =
+            Math.Max(
+                0.0,
+                Math.Min(
+                    firstRight,
+                    secondRight) -
+                Math.Max(
+                    firstLeft,
+                    secondLeft));
+        var verticalOverlap =
+            Math.Max(
+                0.0,
+                Math.Min(
+                    firstBottom,
+                    secondBottom) -
+                Math.Max(
+                    firstTop,
+                    secondTop));
+        var horizontalGap =
+            Math.Max(
+                0.0,
+                Math.Max(
+                    firstLeft,
+                    secondLeft) -
+                Math.Min(
+                    firstRight,
+                    secondRight));
+        var verticalGap =
+            Math.Max(
+                0.0,
+                Math.Max(
+                    firstTop,
+                    secondTop) -
+                Math.Min(
+                    firstBottom,
+                    secondBottom));
+        var verticalAlignment =
+            verticalOverlap /
+            Math.Max(
+                1.0,
+                Math.Min(
+                    firstHeight,
+                    secondHeight));
+        var horizontalAlignment =
+            horizontalOverlap /
+            Math.Max(
+                1.0,
+                Math.Min(
+                    firstWidth,
+                    secondWidth));
+        var tallRelation =
+            Math.Max(
+                firstHeight,
+                secondHeight) >=
+            120.0;
+        var wideRelation =
+            Math.Max(
+                firstWidth,
+                secondWidth) >=
+            160.0;
+        var allowedHorizontalGap =
+            tallRelation
+                ? 72.0
+                : 14.0;
+        var allowedVerticalGap =
+            wideRelation
+                ? 36.0
+                : 12.0;
+        var firstArea =
+            firstWidth *
+            firstHeight;
+        var secondArea =
+            secondWidth *
+            secondHeight;
+        var screenArea =
+            Math.Max(
+                1.0,
+                (double)screenBounds.Width *
+                screenBounds.Height);
+
+        // A large introduction/window region may overlap other holes, but it
+        // must never bridge a dark gap to them and become visually dominant.
+        if (horizontalOverlap <= 0.0 &&
+            verticalOverlap <= 0.0 &&
+            (firstArea >
+                 screenArea *
+                 0.05 ||
+             secondArea >
+                 screenArea *
+                 0.05))
+        {
+            return false;
+        }
+
+        var horizontallyRelated =
+            verticalAlignment >=
+                (tallRelation
+                    ? 0.50
+                    : 0.72) &&
+            horizontalGap <=
+                allowedHorizontalGap;
+        var verticallyRelated =
+            horizontalAlignment >=
+                (wideRelation
+                    ? 0.68
+                    : 0.80) &&
+            verticalGap <=
+                allowedVerticalGap;
+
+        if (!horizontallyRelated &&
+            !verticallyRelated)
+        {
+            return false;
+        }
+
+        var unionLeft =
+            Math.Min(
+                firstLeft,
+                secondLeft);
+        var unionTop =
+            Math.Min(
+                firstTop,
+                secondTop);
+        var unionRight =
+            Math.Max(
+                firstRight,
+                secondRight);
+        var unionBottom =
+            Math.Max(
+                firstBottom,
+                secondBottom);
+        var unionWidth =
+            unionRight -
+            unionLeft;
+        var unionHeight =
+            unionBottom -
+            unionTop;
+        var unionArea =
+            unionWidth *
+            unionHeight;
+        var intersectionArea =
+            horizontalOverlap *
+            verticalOverlap;
+        var occupiedArea =
+            firstWidth *
+                firstHeight +
+            secondWidth *
+                secondHeight -
+            intersectionArea;
+        var inflationLimit =
+            tallRelation ||
+            wideRelation
+                ? 2.35
+                : 1.45;
+        if (unionArea >
+                Math.Max(
+                    1.0,
+                    occupiedArea) *
+                inflationLimit ||
+            unionWidth >
+                1_300.0 ||
+            unionHeight >
+                1_200.0 ||
+            unionArea >
+                screenArea *
+                0.08)
+        {
+            return false;
+        }
+
+        combined =
+            new MaskRegion(
+                new Rect(
+                    unionLeft /
+                    Math.Max(
+                        1.0,
+                        screenBounds.Width),
+                    unionTop /
+                    Math.Max(
+                        1.0,
+                        screenBounds.Height),
+                    unionWidth /
+                    Math.Max(
+                        1.0,
+                        screenBounds.Width),
+                    unionHeight /
+                    Math.Max(
+                        1.0,
+                        screenBounds.Height)),
+                Math.Min(
+                    first.Opacity,
+                    second.Opacity));
+        return true;
+    }
+
     private bool IsPointInsideSupplementalReveal(
         int row,
         int column)
     {
+        if (_pointerControlReveal is not null &&
+            _pointerControlReveal.DimStep == 0 &&
+            IsCursorInsideInteractionReveal(
+                _pointerControlReveal,
+                row,
+                column,
+                0))
+        {
+            return true;
+        }
+
         foreach (var reveal in
                  _interactionRevealRegions)
         {
             if (reveal.DimStep == 0 &&
-                row >= reveal.MinimumRow &&
-                row <= reveal.MaximumRow &&
-                column >= reveal.MinimumColumn &&
-                column <= reveal.MaximumColumn)
+                IsCursorInsideInteractionReveal(
+                    reveal,
+                    row,
+                    column,
+                    0))
             {
                 return true;
             }
