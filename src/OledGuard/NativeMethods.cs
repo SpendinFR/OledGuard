@@ -24,6 +24,7 @@ internal static class NativeMethods
     public const int HtTransparent = -1;
     public const uint ModAlt = 0x0001;
     public const uint ModControl = 0x0002;
+    public const uint VkD = 0x44;
     public const uint VkO = 0x4F;
     public const uint VkR = 0x52;
 

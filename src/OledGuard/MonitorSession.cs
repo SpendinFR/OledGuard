@@ -196,6 +196,9 @@ internal sealed partial class MonitorSession : IDisposable
     public bool ExcludedFromCapture =>
         _overlay.ExcludedFromCapture;
 
+    public string ScreenDeviceName =>
+        _screen.DeviceName;
+
     public void Start(
         bool enabled)
     {
@@ -231,6 +234,7 @@ internal sealed partial class MonitorSession : IDisposable
 
             _detectedRegions.Clear();
             _trackedRegions.Clear();
+            ResetInteractionAssistance();
             ResetMouseVisual();
 
             Array.Clear(
@@ -389,6 +393,13 @@ internal sealed partial class MonitorSession : IDisposable
             BuildDetectedRegions();
             MergeNearbyDetectedRegions();
 
+            if (UpdateInteractionAssistance(
+                    current,
+                    now))
+            {
+                _maskDirty = true;
+            }
+
             if (IsLargeSceneChange())
             {
                 ResetSceneToBaseline(
@@ -455,6 +466,7 @@ internal sealed partial class MonitorSession : IDisposable
     {
         _trackedRegions.Clear();
         _detectedRegions.Clear();
+        ResetInteractionAssistance();
         ResetMouseVisual();
 
         if (revealForeground)
@@ -1844,6 +1856,9 @@ internal sealed partial class MonitorSession : IDisposable
             var visualChanged =
                 UpdateRegionVisualStates(
                     now);
+            var interactionChanged =
+                UpdateInteractionVisualStates(
+                    now);
             var mouseChanged =
                 UpdateMouseVisual(
                     now);
@@ -1860,6 +1875,7 @@ internal sealed partial class MonitorSession : IDisposable
             shouldPush =
                 _maskDirty ||
                 visualChanged ||
+                interactionChanged ||
                 mouseChanged ||
                 revealAllExpired;
 
@@ -2120,7 +2136,9 @@ internal sealed partial class MonitorSession : IDisposable
             }
         }
 
-        return false;
+        return IsPointInsideSupplementalReveal(
+            row,
+            column);
     }
 
     private bool ResetMouseVisual()
@@ -2229,6 +2247,11 @@ internal sealed partial class MonitorSession : IDisposable
                         bottom - top),
                     opacity));
         }
+
+        AppendSupplementalMaskRegions(
+            result,
+            dimSteps,
+            maximumOpacity);
 
         return result;
     }

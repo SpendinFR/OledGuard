@@ -1,5 +1,6 @@
 using Microsoft.Win32;
 using System.Windows;
+using DrawingPoint = System.Drawing.Point;
 using FormsScreen = System.Windows.Forms.Screen;
 
 namespace OledGuard;
@@ -10,6 +11,9 @@ public sealed class ProtectionController : IDisposable
     private readonly object _sync = new();
     private readonly List<MonitorSession>
         _sessions = new();
+    private readonly Dictionary<string, List<Rect>>
+        _manualRevealZones =
+            new(StringComparer.OrdinalIgnoreCase);
 
     private bool _started;
     private bool _disposed;
@@ -112,6 +116,93 @@ public sealed class ProtectionController : IDisposable
         }
     }
 
+    public void BeginManualZoneSelection()
+    {
+        System.Windows.Application.Current.Dispatcher.BeginInvoke(
+            new Action(
+                () =>
+                {
+                    if (!NativeMethods.GetCursorPos(
+                            out var cursor))
+                    {
+                        return;
+                    }
+
+                    var screen =
+                        FormsScreen.FromPoint(
+                            new DrawingPoint(
+                                cursor.X,
+                                cursor.Y));
+
+                    RevealAll(
+                        TimeSpan.FromMinutes(
+                            1));
+
+                    try
+                    {
+                        var selector =
+                            new ManualZoneSelectionWindow(
+                                screen);
+                        var result =
+                            selector.ShowDialog();
+
+                        if (result != true ||
+                            selector.SelectedNormalizedBounds is not
+                                Rect selected)
+                        {
+                            return;
+                        }
+
+                        if (!_manualRevealZones.TryGetValue(
+                                screen.DeviceName,
+                                out var zones))
+                        {
+                            zones =
+                                new List<Rect>();
+                            _manualRevealZones[
+                                screen.DeviceName] =
+                                zones;
+                        }
+
+                        zones.Add(
+                            selected);
+
+                        foreach (var session in
+                                 _sessions)
+                        {
+                            if (string.Equals(
+                                    session.ScreenDeviceName,
+                                    screen.DeviceName,
+                                    StringComparison.OrdinalIgnoreCase))
+                            {
+                                session.SetManualRevealZones(
+                                    zones);
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        RevealAll(
+                            TimeSpan.Zero);
+                    }
+                }));
+    }
+
+    public void ClearManualRevealZones()
+    {
+        lock (_sync)
+        {
+            _manualRevealZones.Clear();
+
+            foreach (var session in
+                     _sessions)
+            {
+                session.SetManualRevealZones(
+                    Array.Empty<Rect>());
+            }
+        }
+    }
+
     public void SetDelaySeconds(
         int seconds)
     {
@@ -178,6 +269,14 @@ public sealed class ProtectionController : IDisposable
                         new MonitorSession(
                             screen,
                             Settings);
+
+                    if (_manualRevealZones.TryGetValue(
+                            screen.DeviceName,
+                            out var zones))
+                    {
+                        session.SetManualRevealZones(
+                            zones);
+                    }
 
                     _sessions.Add(
                         session);

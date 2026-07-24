@@ -108,6 +108,30 @@ internal sealed class TrayService : IDisposable
         menu.Items.Add(
             delayMenu);
 
+        var drawZone =
+            new Forms.ToolStripMenuItem(
+                "Dessiner une zone visible — Ctrl+Alt+D");
+
+        drawZone.Click +=
+            (_, _) =>
+                _controller
+                    .BeginManualZoneSelection();
+
+        menu.Items.Add(
+            drawZone);
+
+        var clearZones =
+            new Forms.ToolStripMenuItem(
+                "Effacer les zones dessinées");
+
+        clearZones.Click +=
+            (_, _) =>
+                _controller
+                    .ClearManualRevealZones();
+
+        menu.Items.Add(
+            clearZones);
+
         var settings =
             new Forms.ToolStripMenuItem(
                 "Paramètres…");

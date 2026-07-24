@@ -5,7 +5,7 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 45;
+    public const int CurrentSchemaVersion = 46;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
@@ -42,8 +42,14 @@ public sealed class AppSettings
     public int MotionZoneDimDurationMilliseconds { get; set; } = 1_200;
     public int MotionZoneDimSteps { get; set; } = 6;
 
-    public int ForegroundWindowRevealMilliseconds { get; set; } = 1_500;
+    public int ForegroundWindowRevealMilliseconds { get; set; } = 3_000;
     public int ForegroundWindowFadeMilliseconds { get; set; } = 500;
+
+    public bool InteractionAssistEnabled { get; set; } = true;
+    public int InteractionAssistWeakPixelThreshold { get; set; } = 6;
+    public int InteractionAssistCompletionMilliseconds { get; set; } = 60;
+    public int InteractionAssistHoldMilliseconds { get; set; } = 3_000;
+    public int InteractionAssistFadeMilliseconds { get; set; } = 300;
 
     public bool MouseVisualEnabled { get; set; } = true;
     public int MouseVisualRadiusPixels { get; set; } = 18;
@@ -178,6 +184,22 @@ public sealed class AppSettings
             }
         }
 
+        if (SchemaVersion < 46)
+        {
+            // Upgrade only the previous stock value. A custom reveal duration
+            // remains untouched.
+            if (ForegroundWindowRevealMilliseconds == 1_500)
+            {
+                ForegroundWindowRevealMilliseconds = 3_000;
+            }
+
+            InteractionAssistEnabled = true;
+            InteractionAssistWeakPixelThreshold = 6;
+            InteractionAssistCompletionMilliseconds = 60;
+            InteractionAssistHoldMilliseconds = 3_000;
+            InteractionAssistFadeMilliseconds = 300;
+        }
+
         SchemaVersion = CurrentSchemaVersion;
     }
 
@@ -218,6 +240,11 @@ public sealed class AppSettings
 
         ForegroundWindowRevealMilliseconds = Math.Clamp(ForegroundWindowRevealMilliseconds, 400, 5_000);
         ForegroundWindowFadeMilliseconds = Math.Clamp(ForegroundWindowFadeMilliseconds, 100, 2_000);
+
+        InteractionAssistWeakPixelThreshold = Math.Clamp(InteractionAssistWeakPixelThreshold, 4, MotionZonePixelThreshold);
+        InteractionAssistCompletionMilliseconds = Math.Clamp(InteractionAssistCompletionMilliseconds, 20, 120);
+        InteractionAssistHoldMilliseconds = Math.Clamp(InteractionAssistHoldMilliseconds, 500, 8_000);
+        InteractionAssistFadeMilliseconds = Math.Clamp(InteractionAssistFadeMilliseconds, 80, 2_000);
 
         MouseVisualRadiusPixels = Math.Clamp(MouseVisualRadiusPixels, 8, 48);
         MouseTrailMilliseconds = Math.Clamp(MouseTrailMilliseconds, 0, 250);
