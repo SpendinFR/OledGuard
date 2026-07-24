@@ -246,11 +246,11 @@ internal sealed class MaskSurface : FrameworkElement
             return null;
         }
 
-        Point local;
+        System.Windows.Point local;
         try
         {
             local = PointFromScreen(
-                new Point(
+                new System.Windows.Point(
                     cursor.X,
                     cursor.Y));
         }
