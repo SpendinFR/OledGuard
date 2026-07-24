@@ -61,8 +61,8 @@ internal sealed partial class MonitorSession
             return false;
         }
 
-        var firstBounds = first.Bounds;
-        var secondBounds = second.Bounds;
+        var firstBounds = first.NormalizedBounds;
+        var secondBounds = second.NormalizedBounds;
         if (firstBounds.Width <= 0.0 ||
             firstBounds.Height <= 0.0 ||
             secondBounds.Width <= 0.0 ||
@@ -103,8 +103,8 @@ internal sealed partial class MonitorSession
         MaskRegion first,
         MaskRegion second)
     {
-        var firstBounds = first.Bounds;
-        var secondBounds = second.Bounds;
+        var firstBounds = first.NormalizedBounds;
+        var secondBounds = second.NormalizedBounds;
         var merged = new Rect(
             Math.Min(firstBounds.Left, secondBounds.Left),
             Math.Min(firstBounds.Top, secondBounds.Top),
