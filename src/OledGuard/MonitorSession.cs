@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Windows;
 using System.Windows.Media;
 using DrawingRectangle = System.Drawing.Rectangle;
 using FormsScreen = System.Windows.Forms.Screen;
@@ -10,28 +9,39 @@ namespace OledGuard;
 
 internal sealed class MonitorSession : IDisposable
 {
-    private const int CellSize = 8;
-    private const int ReconcileMilliseconds = 500;
-    private const int MaximumZoneCount = 64;
-    private const int MaximumTrailSamples = 96;
+    private const int CaptureMilliseconds = 20;
+    private const int CellSize = 6;
 
-    private sealed class ActiveZone
+    private const int TransientHoldMilliseconds = 3_000;
+    private const int ValidationOneMilliseconds = 1_000;
+    private const int ValidationThreeMilliseconds = 3_000;
+    private const int ValidationFiveMilliseconds = 5_000;
+    private const int ValidatedHoldMilliseconds = 30_000;
+    private const int FadeMilliseconds = 300;
+    private const int ResizeMilliseconds = 500;
+    private const int ContinuousGapMilliseconds = 700;
+
+    private const int CursorComponentHoldMilliseconds = 3_000;
+    private const int CursorComponentNearPixels = 24;
+    private const int MaximumZoneCount = 48;
+
+    private sealed class ActivityZone
     {
         public DrawingRectangle Bounds;
-        public DrawingRectangle PendingBounds;
-        public bool HasPendingBounds;
+        public DrawingRectangle RecentBounds;
+        public bool HasRecentBounds;
+
+        public long ContinuousStartTicks;
         public long LastActivityTicks;
-        public long LastReconcileTicks;
+        public long LastResizeTicks;
+
+        public bool ConfirmedAtOneSecond;
+        public bool ConfirmedAtThreeSeconds;
+        public bool Validated;
     }
 
     private readonly record struct MotionComponent(
-        DrawingRectangle Bounds,
-        int CellCount);
-
-    private readonly record struct MouseSample(
-        double X,
-        double Y,
-        long Timestamp);
+        DrawingRectangle Bounds);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NativeWindowRect
@@ -56,12 +66,11 @@ internal sealed class MonitorSession : IDisposable
 
     private readonly byte[] _previousFrame;
     private readonly bool[] _changedCells;
-    private readonly bool[] _visited;
+    private readonly bool[] _visitedCells;
     private readonly int[] _queue;
 
-    private readonly List<ActiveZone> _activeZones = new();
-    private readonly List<WpfRect> _manualRevealZones = new();
-    private readonly List<MouseSample> _mouseTrail = new();
+    private readonly List<ActivityZone> _zones = new();
+    private readonly List<WpfRect> _manualZones = new();
 
     private readonly object _sync = new();
     private readonly CancellationTokenSource _cancellation = new();
@@ -74,15 +83,18 @@ internal sealed class MonitorSession : IDisposable
     private bool _disposed;
 
     private long _revealAllUntilTicks;
+    private long _ignoreMotionUntilTicks;
 
     private IntPtr _lastForegroundWindow;
-    private DrawingRectangle _foregroundBounds;
+    private DrawingRectangle _foregroundRevealBounds;
     private long _foregroundRevealTicks;
 
     private bool _hasCursor;
     private double _cursorX;
     private double _cursorY;
-    private long _lastCursorTicks;
+
+    private DrawingRectangle _cursorComponentBounds;
+    private long _cursorComponentTicks;
 
     public MonitorSession(
         FormsScreen screen,
@@ -97,17 +109,16 @@ internal sealed class MonitorSession : IDisposable
         var requestedWidth =
             Math.Clamp(
                 settings.MotionZoneCaptureWidth,
-                640,
+                960,
                 1280);
-        requestedWidth =
-            Math.Min(
-                requestedWidth,
-                _protectionBounds.Width);
 
         _sampleWidth =
             Math.Max(
                 CellSize,
-                requestedWidth);
+                Math.Min(
+                    requestedWidth,
+                    _protectionBounds.Width));
+
         _sampleHeight =
             Math.Max(
                 CellSize,
@@ -117,6 +128,7 @@ internal sealed class MonitorSession : IDisposable
                     (double)Math.Max(
                         1,
                         _protectionBounds.Width)));
+
         _sampleStride =
             checked(
                 _sampleWidth *
@@ -128,6 +140,7 @@ internal sealed class MonitorSession : IDisposable
                 (int)Math.Ceiling(
                     _sampleWidth /
                     (double)CellSize));
+
         _rows =
             Math.Max(
                 1,
@@ -135,20 +148,21 @@ internal sealed class MonitorSession : IDisposable
                     _sampleHeight /
                     (double)CellSize));
 
-        var frameBytes =
+        var frameLength =
             checked(
                 _sampleStride *
                 _sampleHeight);
+
         var cellCount =
             checked(
                 _columns *
                 _rows);
 
         _previousFrame =
-            new byte[frameBytes];
+            new byte[frameLength];
         _changedCells =
             new bool[cellCount];
-        _visited =
+        _visitedCells =
             new bool[cellCount];
         _queue =
             new int[cellCount];
@@ -156,6 +170,7 @@ internal sealed class MonitorSession : IDisposable
         _overlay =
             new OverlayWindow(
                 screen);
+
         _sampler =
             new ScreenSampler(
                 _protectionBounds,
@@ -173,6 +188,7 @@ internal sealed class MonitorSession : IDisposable
         bool enabled)
     {
         _overlay.EnsureVisible();
+
         SetEnabled(
             enabled);
 
@@ -196,32 +212,29 @@ internal sealed class MonitorSession : IDisposable
             _enabled = enabled;
             _hasPreviousFrame = false;
             _maskDirty = true;
+
             _revealAllUntilTicks = 0;
+            _ignoreMotionUntilTicks = 0;
+
             _lastForegroundWindow =
                 IntPtr.Zero;
-            _foregroundBounds =
+            _foregroundRevealBounds =
                 DrawingRectangle.Empty;
             _foregroundRevealTicks = 0;
 
-            _activeZones.Clear();
-            _mouseTrail.Clear();
+            _zones.Clear();
+
             _hasCursor = false;
-            _cursorX = 0;
-            _cursorY = 0;
-            _lastCursorTicks = 0;
+            _cursorX = 0.0;
+            _cursorY = 0.0;
+            _cursorComponentBounds =
+                DrawingRectangle.Empty;
+            _cursorComponentTicks = 0;
 
             Array.Clear(
                 _previousFrame,
                 0,
                 _previousFrame.Length);
-            Array.Clear(
-                _changedCells,
-                0,
-                _changedCells.Length);
-            Array.Clear(
-                _visited,
-                0,
-                _visited.Length);
         }
 
         PushScene(
@@ -234,11 +247,14 @@ internal sealed class MonitorSession : IDisposable
         lock (_sync)
         {
             _revealAllUntilTicks =
-                duration <= TimeSpan.Zero
+                duration <=
+                    TimeSpan.Zero
                     ? 0
                     : Stopwatch.GetTimestamp() +
                       ToStopwatchTicks(
-                          duration.TotalMilliseconds);
+                          duration
+                              .TotalMilliseconds);
+
             _maskDirty = true;
         }
     }
@@ -248,7 +264,7 @@ internal sealed class MonitorSession : IDisposable
     {
         lock (_sync)
         {
-            _manualRevealZones.Clear();
+            _manualZones.Clear();
 
             foreach (var zone in
                      zones)
@@ -257,13 +273,12 @@ internal sealed class MonitorSession : IDisposable
                     NormalizeRect(
                         zone);
 
-                if (normalized.Width <= 0.0 ||
-                    normalized.Height <= 0.0)
+                if (normalized.IsEmpty)
                 {
                     continue;
                 }
 
-                _manualRevealZones.Add(
+                _manualZones.Add(
                     normalized);
             }
 
@@ -273,42 +288,37 @@ internal sealed class MonitorSession : IDisposable
 
     private async Task CaptureLoopAsync()
     {
-        var delayMilliseconds =
-            Math.Clamp(
-                _settings
-                    .MotionZoneSamplingMilliseconds,
-                50,
-                100);
-
         while (!_cancellation
                    .IsCancellationRequested)
         {
             try
             {
-                bool shouldCapture;
+                bool capture;
 
                 lock (_sync)
                 {
-                    shouldCapture =
+                    capture =
                         _enabled;
                 }
 
-                if (shouldCapture)
+                if (capture)
                 {
                     var foregroundWindow =
                         GetForegroundWindow();
-                    var current =
+
+                    var currentFrame =
                         _sampler.Capture();
 
-                    AnalyzeCapture(
-                        current,
+                    AnalyzeFrame(
+                        currentFrame,
                         foregroundWindow);
                 }
 
                 await Task.Delay(
-                        delayMilliseconds,
+                        CaptureMilliseconds,
                         _cancellation.Token)
-                    .ConfigureAwait(false);
+                    .ConfigureAwait(
+                        false);
             }
             catch (OperationCanceledException)
             {
@@ -319,9 +329,10 @@ internal sealed class MonitorSession : IDisposable
                 try
                 {
                     await Task.Delay(
-                            250,
+                            100,
                             _cancellation.Token)
-                        .ConfigureAwait(false);
+                        .ConfigureAwait(
+                            false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -331,8 +342,8 @@ internal sealed class MonitorSession : IDisposable
         }
     }
 
-    private void AnalyzeCapture(
-        byte[] current,
+    private void AnalyzeFrame(
+        byte[] currentFrame,
         IntPtr foregroundWindow)
     {
         var now =
@@ -345,92 +356,134 @@ internal sealed class MonitorSession : IDisposable
                 return;
             }
 
-            UpdateForegroundReveal(
-                foregroundWindow,
+            ReadCursor(
                 now);
+
+            var foregroundChanged =
+                foregroundWindow !=
+                _lastForegroundWindow;
+
+            if (foregroundChanged)
+            {
+                _lastForegroundWindow =
+                    foregroundWindow;
+
+                RevealForegroundWindow(
+                    foregroundWindow,
+                    now);
+
+                _ignoreMotionUntilTicks =
+                    now +
+                    ToStopwatchTicks(
+                        120);
+            }
 
             if (!_hasPreviousFrame)
             {
-                CopyCurrentToPrevious(
-                    current);
-                _hasPreviousFrame = true;
+                CopyFrame(
+                    currentFrame);
+
+                _hasPreviousFrame =
+                    true;
                 _maskDirty = true;
                 return;
             }
 
-            DetectChangedCells(
-                current);
+            var changedCellCount =
+                DetectChangedCells(
+                    currentFrame);
+
+            if (now <
+                _ignoreMotionUntilTicks)
+            {
+                CopyFrame(
+                    currentFrame);
+                return;
+            }
+
+            var changedFraction =
+                changedCellCount /
+                (double)Math.Max(
+                    1,
+                    _changedCells.Length);
+
+            if (changedFraction >=
+                0.18)
+            {
+                RevealForegroundWindow(
+                    foregroundWindow,
+                    now);
+
+                _ignoreMotionUntilTicks =
+                    now +
+                    ToStopwatchTicks(
+                        120);
+
+                CopyFrame(
+                    currentFrame);
+                return;
+            }
+
             var components =
-                BuildMotionComponents();
-            MergeNearbyComponents(
-                components);
-            UpdateActiveZones(
+                BuildConnectedComponents();
+
+            UpdateZones(
                 components,
                 now);
 
-            CopyCurrentToPrevious(
-                current);
+            UpdateCursorComponent(
+                components,
+                now);
+
+            CopyFrame(
+                currentFrame);
         }
     }
 
-    private void UpdateForegroundReveal(
+    private void RevealForegroundWindow(
         IntPtr foregroundWindow,
         long now)
     {
         if (foregroundWindow ==
-            _lastForegroundWindow)
-        {
-            return;
-        }
-
-        _lastForegroundWindow =
-            foregroundWindow;
-
-        if (foregroundWindow ==
                 IntPtr.Zero ||
-            IsDesktopOrShellWindow(
+            IsShellWindow(
                 foregroundWindow) ||
             !GetWindowRect(
                 foregroundWindow,
-                out var native))
+                out var nativeRectangle))
         {
-            _foregroundBounds =
-                DrawingRectangle.Empty;
-            _foregroundRevealTicks = 0;
-            _maskDirty = true;
             return;
         }
 
-        var windowBounds =
+        var absolute =
             DrawingRectangle.FromLTRB(
-                native.Left,
-                native.Top,
-                native.Right,
-                native.Bottom);
+                nativeRectangle.Left,
+                nativeRectangle.Top,
+                nativeRectangle.Right,
+                nativeRectangle.Bottom);
+
         var visible =
             DrawingRectangle.Intersect(
-                windowBounds,
+                absolute,
                 _protectionBounds);
 
         if (visible.Width < 40 ||
             visible.Height < 30)
         {
-            _foregroundBounds =
-                DrawingRectangle.Empty;
-            _foregroundRevealTicks = 0;
-            _maskDirty = true;
             return;
         }
 
-        _foregroundBounds =
+        _foregroundRevealBounds =
             ToLocalBounds(
                 visible);
+
         _foregroundRevealTicks =
             now;
+
         _maskDirty = true;
     }
 
-    private static bool IsDesktopOrShellWindow(
+    private static bool IsShellWindow(
         IntPtr window)
     {
         var className =
@@ -452,20 +505,73 @@ internal sealed class MonitorSession : IDisposable
             "Shell_SecondaryTrayWnd";
     }
 
-    private void DetectChangedCells(
-        byte[] current)
+    private void ReadCursor(
+        long now)
+    {
+        if (!_settings.MouseVisualEnabled ||
+            !NativeMethods.GetCursorPos(
+                out var cursor) ||
+            !_protectionBounds.Contains(
+                cursor.X,
+                cursor.Y))
+        {
+            if (_hasCursor)
+            {
+                _hasCursor = false;
+                _maskDirty = true;
+            }
+
+            return;
+        }
+
+        var localX =
+            cursor.X -
+            _protectionBounds.Left;
+
+        var localY =
+            cursor.Y -
+            _protectionBounds.Top;
+
+        var moved =
+            !_hasCursor ||
+            Math.Abs(
+                localX -
+                _cursorX) >= 0.5 ||
+            Math.Abs(
+                localY -
+                _cursorY) >= 0.5;
+
+        _hasCursor = true;
+        _cursorX = localX;
+        _cursorY = localY;
+
+        if (moved)
+        {
+            RevealKnownZoneUnderCursor(
+                localX,
+                localY,
+                now);
+
+            _maskDirty = true;
+        }
+    }
+
+    private int DetectChangedCells(
+        byte[] currentFrame)
     {
         Array.Clear(
             _changedCells,
             0,
             _changedCells.Length);
 
-        var threshold =
+        var normalThreshold =
             Math.Clamp(
                 _settings
                     .MotionZonePixelThreshold,
                 6,
-                32);
+                24);
+
+        var changedCellCount = 0;
 
         for (var row = 0;
              row < _rows;
@@ -474,6 +580,7 @@ internal sealed class MonitorSession : IDisposable
             var top =
                 row *
                 CellSize;
+
             var bottom =
                 Math.Min(
                     _sampleHeight - 1,
@@ -488,77 +595,156 @@ internal sealed class MonitorSession : IDisposable
                 var left =
                     column *
                     CellSize;
+
                 var right =
                     Math.Min(
                         _sampleWidth - 1,
                         left +
                         CellSize -
                         1);
+
                 var centerX =
                     (left +
                      right) /
                     2;
+
                 var centerY =
                     (top +
                      bottom) /
                     2;
 
+                var nearCursor =
+                    IsSampleCellNearCursor(
+                        left,
+                        top,
+                        right,
+                        bottom);
+
+                var threshold =
+                    nearCursor
+                        ? Math.Max(
+                            5,
+                            normalThreshold -
+                            2)
+                        : normalThreshold;
+
                 var changedSamples = 0;
 
                 changedSamples +=
                     PixelChanged(
-                        current,
+                        currentFrame,
                         left,
                         top,
                         threshold)
                         ? 1
                         : 0;
+
                 changedSamples +=
                     PixelChanged(
-                        current,
+                        currentFrame,
                         right,
                         top,
                         threshold)
                         ? 1
                         : 0;
+
                 changedSamples +=
                     PixelChanged(
-                        current,
+                        currentFrame,
                         left,
                         bottom,
                         threshold)
                         ? 1
                         : 0;
+
                 changedSamples +=
                     PixelChanged(
-                        current,
+                        currentFrame,
                         right,
                         bottom,
                         threshold)
                         ? 1
                         : 0;
+
                 changedSamples +=
                     PixelChanged(
-                        current,
+                        currentFrame,
                         centerX,
                         centerY,
                         threshold)
                         ? 1
                         : 0;
 
-                if (changedSamples >= 2)
+                var changed =
+                    nearCursor
+                        ? changedSamples >= 1
+                        : changedSamples >= 2;
+
+                if (!changed)
                 {
-                    _changedCells[
-                        row *
-                        _columns +
-                        column] = true;
+                    continue;
                 }
+
+                _changedCells[
+                    row *
+                    _columns +
+                    column] = true;
+
+                changedCellCount++;
             }
         }
+
+        return changedCellCount;
+    }
+
+    private bool IsSampleCellNearCursor(
+        int left,
+        int top,
+        int right,
+        int bottom)
+    {
+        if (!_hasCursor)
+        {
+            return false;
+        }
+
+        var sampleCursorX =
+            _cursorX *
+            _sampleWidth /
+            Math.Max(
+                1.0,
+                _protectionBounds.Width);
+
+        var sampleCursorY =
+            _cursorY *
+            _sampleHeight /
+            Math.Max(
+                1.0,
+                _protectionBounds.Height);
+
+        var margin =
+            CursorComponentNearPixels *
+            _sampleWidth /
+            Math.Max(
+                1.0,
+                _protectionBounds.Width);
+
+        return sampleCursorX >=
+                   left -
+                   margin &&
+               sampleCursorX <=
+                   right +
+                   margin &&
+               sampleCursorY >=
+                   top -
+                   margin &&
+               sampleCursorY <=
+                   bottom +
+                   margin;
     }
 
     private bool PixelChanged(
-        byte[] current,
+        byte[] currentFrame,
         int x,
         int y,
         int threshold)
@@ -569,36 +755,38 @@ internal sealed class MonitorSession : IDisposable
             x *
             4;
 
-        var blue =
+        var blueDifference =
             Math.Abs(
-                current[index] -
+                currentFrame[index] -
                 _previousFrame[index]);
-        var green =
+
+        var greenDifference =
             Math.Abs(
-                current[index + 1] -
+                currentFrame[index + 1] -
                 _previousFrame[index + 1]);
-        var red =
+
+        var redDifference =
             Math.Abs(
-                current[index + 2] -
+                currentFrame[index + 2] -
                 _previousFrame[index + 2]);
 
         return Math.Max(
-                   blue,
+                   blueDifference,
                    Math.Max(
-                       green,
-                       red)) >=
+                       greenDifference,
+                       redDifference)) >=
                threshold;
     }
 
     private List<MotionComponent>
-        BuildMotionComponents()
+        BuildConnectedComponents()
     {
         Array.Clear(
-            _visited,
+            _visitedCells,
             0,
-            _visited.Length);
+            _visitedCells.Length);
 
-        var result =
+        var components =
             new List<MotionComponent>();
 
         for (var row = 0;
@@ -615,16 +803,18 @@ internal sealed class MonitorSession : IDisposable
                     column;
 
                 if (!_changedCells[startIndex] ||
-                    _visited[startIndex])
+                    _visitedCells[startIndex])
                 {
                     continue;
                 }
 
                 var head = 0;
                 var tail = 0;
+
                 _queue[tail++] =
                     startIndex;
-                _visited[startIndex] =
+
+                _visitedCells[startIndex] =
                     true;
 
                 var minimumRow = row;
@@ -633,32 +823,38 @@ internal sealed class MonitorSession : IDisposable
                     column;
                 var maximumColumn =
                     column;
-                var cells = 0;
+                var cellCount = 0;
 
                 while (head < tail)
                 {
                     var index =
                         _queue[head++];
+
                     var currentRow =
                         index /
                         _columns;
+
                     var currentColumn =
                         index %
                         _columns;
-                    cells++;
+
+                    cellCount++;
 
                     minimumRow =
                         Math.Min(
                             minimumRow,
                             currentRow);
+
                     maximumRow =
                         Math.Max(
                             maximumRow,
                             currentRow);
+
                     minimumColumn =
                         Math.Min(
                             minimumColumn,
                             currentColumn);
+
                     maximumColumn =
                         Math.Max(
                             maximumColumn,
@@ -681,6 +877,7 @@ internal sealed class MonitorSession : IDisposable
                             var nextRow =
                                 currentRow +
                                 rowOffset;
+
                             var nextColumn =
                                 currentColumn +
                                 columnOffset;
@@ -699,16 +896,15 @@ internal sealed class MonitorSession : IDisposable
                                 _columns +
                                 nextColumn;
 
-                            if (!_changedCells[
-                                    nextIndex] ||
-                                _visited[
-                                    nextIndex])
+                            if (!_changedCells[nextIndex] ||
+                                _visitedCells[nextIndex])
                             {
                                 continue;
                             }
 
-                            _visited[nextIndex] =
+                            _visitedCells[nextIndex] =
                                 true;
+
                             _queue[tail++] =
                                 nextIndex;
                         }
@@ -716,16 +912,19 @@ internal sealed class MonitorSession : IDisposable
                 }
 
                 var bounds =
-                    ComponentToLocalBounds(
+                    CellsToLocalRectangle(
                         minimumRow,
                         maximumRow,
                         minimumColumn,
                         maximumColumn);
 
-                if (cells < 2 &&
-                    !IsCursorNear(
+                var nearCursor =
+                    IsCursorNearRectangle(
                         bounds,
-                        20))
+                        CursorComponentNearPixels);
+
+                if (cellCount < 2 &&
+                    !nearCursor)
                 {
                     continue;
                 }
@@ -736,18 +935,17 @@ internal sealed class MonitorSession : IDisposable
                     continue;
                 }
 
-                result.Add(
+                components.Add(
                     new MotionComponent(
-                        bounds,
-                        cells));
+                        bounds));
             }
         }
 
-        return result;
+        return components;
     }
 
     private DrawingRectangle
-        ComponentToLocalBounds(
+        CellsToLocalRectangle(
             int minimumRow,
             int maximumRow,
             int minimumColumn,
@@ -756,14 +954,17 @@ internal sealed class MonitorSession : IDisposable
         var sampleLeft =
             minimumColumn *
             CellSize;
+
         var sampleTop =
             minimumRow *
             CellSize;
+
         var sampleRight =
             Math.Min(
                 _sampleWidth,
                 (maximumColumn + 1) *
                 CellSize);
+
         var sampleBottom =
             Math.Min(
                 _sampleHeight,
@@ -777,6 +978,7 @@ internal sealed class MonitorSession : IDisposable
                 (double)Math.Max(
                     1,
                     _sampleWidth));
+
         var top =
             (int)Math.Floor(
                 sampleTop *
@@ -784,6 +986,7 @@ internal sealed class MonitorSession : IDisposable
                 (double)Math.Max(
                     1,
                     _sampleHeight));
+
         var right =
             (int)Math.Ceiling(
                 sampleRight *
@@ -791,6 +994,7 @@ internal sealed class MonitorSession : IDisposable
                 (double)Math.Max(
                     1,
                     _sampleWidth));
+
         var bottom =
             (int)Math.Ceiling(
                 sampleBottom *
@@ -805,68 +1009,16 @@ internal sealed class MonitorSession : IDisposable
                 top,
                 right,
                 bottom);
-        rectangle.Inflate(
-            6,
-            6);
 
-        return ClampLocalBounds(
+        rectangle.Inflate(
+            4,
+            4);
+
+        return ClampLocalRectangle(
             rectangle);
     }
 
-    private static void MergeNearbyComponents(
-        List<MotionComponent> components)
-    {
-        var merged = true;
-
-        while (merged)
-        {
-            merged = false;
-
-            for (var firstIndex = 0;
-                 firstIndex < components.Count;
-                 firstIndex++)
-            {
-                for (var secondIndex =
-                         firstIndex + 1;
-                     secondIndex <
-                     components.Count;
-                     secondIndex++)
-                {
-                    var first =
-                        components[firstIndex];
-                    var second =
-                        components[secondIndex];
-
-                    if (!RectanglesNear(
-                            first.Bounds,
-                            second.Bounds,
-                            10))
-                    {
-                        continue;
-                    }
-
-                    components[firstIndex] =
-                        new MotionComponent(
-                            DrawingRectangle.Union(
-                                first.Bounds,
-                                second.Bounds),
-                            first.CellCount +
-                            second.CellCount);
-                    components.RemoveAt(
-                        secondIndex);
-                    merged = true;
-                    break;
-                }
-
-                if (merged)
-                {
-                    break;
-                }
-            }
-        }
-    }
-
-    private void UpdateActiveZones(
+    private void UpdateZones(
         IReadOnlyList<MotionComponent> components,
         long now)
     {
@@ -874,40 +1026,43 @@ internal sealed class MonitorSession : IDisposable
                  components)
         {
             var zone =
-                FindBestZone(
+                FindMatchingZone(
                     component.Bounds);
 
             if (zone is null)
             {
                 zone =
-                    new ActiveZone
+                    new ActivityZone
                     {
                         Bounds =
                             component.Bounds,
-                        PendingBounds =
+                        RecentBounds =
                             component.Bounds,
-                        HasPendingBounds =
+                        HasRecentBounds =
                             true,
+                        ContinuousStartTicks =
+                            now,
                         LastActivityTicks =
                             now,
-                        LastReconcileTicks =
+                        LastResizeTicks =
                             now
                     };
 
-                _activeZones.Add(
+                _zones.Add(
                     zone);
 
-                if (_activeZones.Count >
+                if (_zones.Count >
                     MaximumZoneCount)
                 {
                     var oldest =
-                        _activeZones
+                        _zones
                             .OrderBy(
                                 candidate =>
                                     candidate
                                         .LastActivityTicks)
                             .First();
-                    _activeZones.Remove(
+
+                    _zones.Remove(
                         oldest);
                 }
 
@@ -915,110 +1070,106 @@ internal sealed class MonitorSession : IDisposable
                 continue;
             }
 
-            var grown =
+            var previousActivity =
+                zone.LastActivityTicks;
+
+            if (now -
+                    previousActivity >
+                ToStopwatchTicks(
+                    ContinuousGapMilliseconds))
+            {
+                zone.ContinuousStartTicks =
+                    now;
+
+                zone.ConfirmedAtOneSecond =
+                    false;
+
+                zone.ConfirmedAtThreeSeconds =
+                    false;
+            }
+
+            zone.LastActivityTicks =
+                now;
+
+            zone.RecentBounds =
+                zone.HasRecentBounds
+                    ? DrawingRectangle.Union(
+                        zone.RecentBounds,
+                        component.Bounds)
+                    : component.Bounds;
+
+            zone.HasRecentBounds =
+                true;
+
+            var grownBounds =
                 DrawingRectangle.Union(
                     zone.Bounds,
                     component.Bounds);
 
-            if (grown !=
+            if (grownBounds !=
                 zone.Bounds)
             {
                 zone.Bounds =
-                    ClampLocalBounds(
-                        grown);
+                    ClampLocalRectangle(
+                        grownBounds);
+
                 _maskDirty = true;
             }
 
-            zone.PendingBounds =
-                zone.HasPendingBounds
-                    ? DrawingRectangle.Union(
-                        zone.PendingBounds,
-                        component.Bounds)
-                    : component.Bounds;
-            zone.HasPendingBounds =
-                true;
-            zone.LastActivityTicks =
-                now;
-        }
-
-        foreach (var zone in
-                 _activeZones)
-        {
-            if (now -
-                    zone.LastReconcileTicks <
-                ToStopwatchTicks(
-                    ReconcileMilliseconds))
+            if (!zone.Validated)
             {
-                continue;
-            }
+                var continuousElapsed =
+                    now -
+                    zone.ContinuousStartTicks;
 
-            if (zone.HasPendingBounds)
-            {
-                var target =
-                    zone.PendingBounds;
-                target.Inflate(
-                    6,
-                    6);
-                target =
-                    ClampLocalBounds(
-                        target);
-
-                if (target.Width > 0 &&
-                    target.Height > 0)
+                if (continuousElapsed >=
+                    ToStopwatchTicks(
+                        ValidationOneMilliseconds))
                 {
-                    var currentArea =
-                        Math.Max(
-                            1,
-                            zone.Bounds.Width *
-                            zone.Bounds.Height);
-                    var targetArea =
-                        Math.Max(
-                            1,
-                            target.Width *
-                            target.Height);
+                    zone.ConfirmedAtOneSecond =
+                        true;
+                }
 
-                    if (targetArea <
-                        currentArea *
-                        0.90)
-                    {
-                        zone.Bounds =
-                            target;
-                        _maskDirty = true;
-                    }
-                    else
-                    {
-                        zone.Bounds =
-                            ClampLocalBounds(
-                                DrawingRectangle.Union(
-                                    zone.Bounds,
-                                    target));
-                    }
+                if (continuousElapsed >=
+                    ToStopwatchTicks(
+                        ValidationThreeMilliseconds))
+                {
+                    zone.ConfirmedAtThreeSeconds =
+                        true;
+                }
+
+                if (continuousElapsed >=
+                        ToStopwatchTicks(
+                            ValidationFiveMilliseconds) &&
+                    zone.ConfirmedAtOneSecond &&
+                    zone.ConfirmedAtThreeSeconds)
+                {
+                    zone.Validated =
+                        true;
+
+                    _maskDirty = true;
                 }
             }
-
-            zone.PendingBounds =
-                DrawingRectangle.Empty;
-            zone.HasPendingBounds =
-                false;
-            zone.LastReconcileTicks =
-                now;
         }
+
+        ResizeZones(
+            now);
     }
 
-    private ActiveZone? FindBestZone(
+    private ActivityZone? FindMatchingZone(
         DrawingRectangle component)
     {
-        ActiveZone? best = null;
+        ActivityZone? best = null;
         var bestScore =
             double.NegativeInfinity;
 
         foreach (var zone in
-                 _activeZones)
+                 _zones)
         {
-            if (!RectanglesNear(
+            if (!RectanglesConnected(
                     zone.Bounds,
                     component,
-                    18))
+                    6))
             {
                 continue;
             }
@@ -1027,6 +1178,7 @@ internal sealed class MonitorSession : IDisposable
                 DrawingRectangle.Intersect(
                     zone.Bounds,
                     component);
+
             var intersectionArea =
                 Math.Max(
                     0,
@@ -1034,51 +1186,188 @@ internal sealed class MonitorSession : IDisposable
                 Math.Max(
                     0,
                     intersection.Height);
+
             var centerDistance =
                 Math.Abs(
                     zone.Bounds.Left +
-                    zone.Bounds.Width / 2.0 -
+                    zone.Bounds.Width /
+                    2.0 -
                     component.Left -
-                    component.Width / 2.0) +
+                    component.Width /
+                    2.0) +
                 Math.Abs(
                     zone.Bounds.Top +
-                    zone.Bounds.Height / 2.0 -
+                    zone.Bounds.Height /
+                    2.0 -
                     component.Top -
-                    component.Height / 2.0);
+                    component.Height /
+                    2.0);
 
             var score =
                 intersectionArea *
                 1000.0 -
                 centerDistance;
 
-            if (score >
+            if (score <=
                 bestScore)
             {
-                best =
-                    zone;
-                bestScore =
-                    score;
+                continue;
             }
+
+            best =
+                zone;
+
+            bestScore =
+                score;
         }
 
         return best;
     }
 
+    private void ResizeZones(
+        long now)
+    {
+        foreach (var zone in
+                 _zones)
+        {
+            if (now -
+                    zone.LastResizeTicks <
+                ToStopwatchTicks(
+                    ResizeMilliseconds))
+            {
+                continue;
+            }
+
+            zone.LastResizeTicks =
+                now;
+
+            if (!zone.HasRecentBounds)
+            {
+                continue;
+            }
+
+            var cleanBounds =
+                zone.RecentBounds;
+
+            cleanBounds.Inflate(
+                zone.Validated
+                    ? 8
+                    : 4,
+                zone.Validated
+                    ? 8
+                    : 4);
+
+            cleanBounds =
+                ClampLocalRectangle(
+                    cleanBounds);
+
+            if (cleanBounds.Width > 0 &&
+                cleanBounds.Height > 0 &&
+                cleanBounds !=
+                zone.Bounds)
+            {
+                zone.Bounds =
+                    cleanBounds;
+
+                _maskDirty = true;
+            }
+
+            zone.RecentBounds =
+                DrawingRectangle.Empty;
+
+            zone.HasRecentBounds =
+                false;
+        }
+    }
+
+    private void UpdateCursorComponent(
+        IReadOnlyList<MotionComponent> components,
+        long now)
+    {
+        if (!_hasCursor)
+        {
+            return;
+        }
+
+        foreach (var component in
+                 components)
+        {
+            if (!IsCursorNearRectangle(
+                    component.Bounds,
+                    CursorComponentNearPixels))
+            {
+                continue;
+            }
+
+            var zone =
+                FindMatchingZone(
+                    component.Bounds);
+
+            _cursorComponentBounds =
+                zone?.Bounds ??
+                component.Bounds;
+
+            _cursorComponentTicks =
+                now;
+
+            if (zone is not null)
+            {
+                zone.LastActivityTicks =
+                    now;
+            }
+
+            _maskDirty = true;
+            return;
+        }
+    }
+
+    private void RevealKnownZoneUnderCursor(
+        double localX,
+        double localY,
+        long now)
+    {
+        foreach (var zone in
+                 _zones)
+        {
+            if (!zone.Bounds.Contains(
+                    (int)Math.Round(
+                        localX),
+                    (int)Math.Round(
+                        localY)))
+            {
+                continue;
+            }
+
+            _cursorComponentBounds =
+                zone.Bounds;
+
+            _cursorComponentTicks =
+                now;
+
+            zone.LastActivityTicks =
+                now;
+
+            _maskDirty = true;
+            return;
+        }
+    }
+
     private void OnRendering(
         object? sender,
-        EventArgs e)
+        EventArgs eventArgs)
     {
         var now =
             Stopwatch.GetTimestamp();
+
         var shouldPush = false;
 
         lock (_sync)
         {
-            var cursorChanged =
-                UpdateCursor(
-                    now);
+            ReadCursor(
+                now);
+
             var animationActive =
-                UpdateLifetimes(
+                UpdateExpirations(
                     now);
 
             var revealAllExpired =
@@ -1093,7 +1382,6 @@ internal sealed class MonitorSession : IDisposable
 
             shouldPush =
                 _maskDirty ||
-                cursorChanged ||
                 animationActive ||
                 revealAllExpired;
 
@@ -1107,300 +1395,98 @@ internal sealed class MonitorSession : IDisposable
         }
     }
 
-    private bool UpdateCursor(
+    private bool UpdateExpirations(
         long now)
     {
-        if (!_enabled ||
-            !_settings.MouseVisualEnabled ||
-            !NativeMethods.GetCursorPos(
-                out var cursor) ||
-            !_protectionBounds.Contains(
-                cursor.X,
-                cursor.Y))
-        {
-            var changed =
-                _hasCursor ||
-                _mouseTrail.Count > 0;
-            _hasCursor = false;
-            _mouseTrail.Clear();
-            return changed;
-        }
-
-        var localX =
-            cursor.X -
-            _protectionBounds.Left;
-        var localY =
-            cursor.Y -
-            _protectionBounds.Top;
-
-        if (!_hasCursor)
-        {
-            _hasCursor = true;
-            _cursorX = localX;
-            _cursorY = localY;
-            _lastCursorTicks =
-                now;
-            RefreshZoneUnderCursor(
-                localX,
-                localY,
-                now);
-            return true;
-        }
-
-        var moved =
-            Math.Abs(
-                localX -
-                _cursorX) >= 0.5 ||
-            Math.Abs(
-                localY -
-                _cursorY) >= 0.5;
-
-        if (moved)
-        {
-            AddCursorPath(
-                _cursorX,
-                _cursorY,
-                localX,
-                localY,
-                _lastCursorTicks,
-                now);
-
-            _cursorX = localX;
-            _cursorY = localY;
-            _lastCursorTicks =
-                now;
-
-            RefreshZoneUnderCursor(
-                localX,
-                localY,
-                now);
-        }
-
-        var trailChanged =
-            PruneMouseTrail(
-                now);
-
-        return moved ||
-               trailChanged ||
-               _mouseTrail.Count > 0;
-    }
-
-    private void RefreshZoneUnderCursor(
-        double x,
-        double y,
-        long now)
-    {
-        foreach (var zone in
-                 _activeZones)
-        {
-            if (!zone.Bounds.Contains(
-                    (int)Math.Round(x),
-                    (int)Math.Round(y)))
-            {
-                continue;
-            }
-
-            zone.LastActivityTicks =
-                now;
-            _maskDirty = true;
-        }
-    }
-
-    private void AddCursorPath(
-        double startX,
-        double startY,
-        double endX,
-        double endY,
-        long startTicks,
-        long endTicks)
-    {
-        var trailMilliseconds =
-            Math.Clamp(
-                _settings
-                    .MouseTrailMilliseconds,
-                0,
-                250);
-
-        if (trailMilliseconds <= 0)
-        {
-            _mouseTrail.Clear();
-            return;
-        }
-
-        var distance =
-            Math.Sqrt(
-                Math.Pow(
-                    endX -
-                    startX,
-                    2) +
-                Math.Pow(
-                    endY -
-                    startY,
-                    2));
-        var spacing =
-            Math.Max(
-                4,
-                _settings
-                    .MouseTrailSpacingPixels);
-        var steps =
-            Math.Clamp(
-                (int)Math.Ceiling(
-                    distance /
-                    spacing),
-                1,
-                12);
-
-        for (var step = 1;
-             step <= steps;
-             step++)
-        {
-            var ratio =
-                step /
-                (double)steps;
-
-            _mouseTrail.Add(
-                new MouseSample(
-                    startX +
-                    (endX -
-                     startX) *
-                    ratio,
-                    startY +
-                    (endY -
-                     startY) *
-                    ratio,
-                    startTicks +
-                    (long)(
-                        (endTicks -
-                         startTicks) *
-                        ratio)));
-        }
-
-        if (_mouseTrail.Count >
-            MaximumTrailSamples)
-        {
-            _mouseTrail.RemoveRange(
-                0,
-                _mouseTrail.Count -
-                MaximumTrailSamples);
-        }
-    }
-
-    private bool PruneMouseTrail(
-        long now)
-    {
-        if (_mouseTrail.Count == 0)
-        {
-            return false;
-        }
-
-        var lifetimeTicks =
-            ToStopwatchTicks(
-                Math.Clamp(
-                    _settings
-                        .MouseTrailMilliseconds,
-                    0,
-                    250));
-        var removed = false;
-
-        while (_mouseTrail.Count > 0 &&
-               now -
-                   _mouseTrail[0]
-                       .Timestamp >=
-               lifetimeTicks)
-        {
-            _mouseTrail.RemoveAt(
-                0);
-            removed = true;
-        }
-
-        return removed;
-    }
-
-    private bool UpdateLifetimes(
-        long now)
-    {
-        var holdTicks =
-            ToStopwatchTicks(
-                Math.Clamp(
-                    _settings
-                        .MotionZoneRecurringHoldMilliseconds,
-                    500,
-                    10_000));
-        var fadeTicks =
-            ToStopwatchTicks(
-                Math.Clamp(
-                    _settings
-                        .MotionZoneTransientFadeMilliseconds,
-                    80,
-                    1_000));
         var animationActive = false;
 
         for (var index =
-                 _activeZones.Count - 1;
+                 _zones.Count - 1;
              index >= 0;
              index--)
         {
+            var zone =
+                _zones[index];
+
+            var holdMilliseconds =
+                zone.Validated
+                    ? ValidatedHoldMilliseconds
+                    : TransientHoldMilliseconds;
+
             var elapsed =
                 now -
-                _activeZones[index]
-                    .LastActivityTicks;
+                zone.LastActivityTicks;
 
             if (elapsed >=
-                holdTicks +
-                fadeTicks)
+                ToStopwatchTicks(
+                    holdMilliseconds +
+                    FadeMilliseconds))
             {
-                _activeZones.RemoveAt(
+                _zones.RemoveAt(
                     index);
+
                 _maskDirty = true;
                 continue;
             }
 
             if (elapsed >=
-                holdTicks)
+                ToStopwatchTicks(
+                    holdMilliseconds))
             {
                 animationActive = true;
             }
         }
 
-        if (!_foregroundBounds.IsEmpty)
+        if (!_foregroundRevealBounds.IsEmpty)
         {
-            var foregroundHold =
-                ToStopwatchTicks(
-                    Math.Clamp(
-                        _settings
-                            .ForegroundWindowRevealMilliseconds,
-                        400,
-                        5_000));
-            var foregroundFade =
-                ToStopwatchTicks(
-                    Math.Clamp(
-                        _settings
-                            .ForegroundWindowFadeMilliseconds,
-                        100,
-                        1_000));
             var elapsed =
                 now -
                 _foregroundRevealTicks;
 
             if (elapsed >=
-                foregroundHold +
-                foregroundFade)
+                ToStopwatchTicks(
+                    TransientHoldMilliseconds +
+                    FadeMilliseconds))
             {
-                _foregroundBounds =
+                _foregroundRevealBounds =
                     DrawingRectangle.Empty;
+
                 _foregroundRevealTicks = 0;
+
                 _maskDirty = true;
             }
             else if (elapsed >=
-                     foregroundHold)
+                     ToStopwatchTicks(
+                         TransientHoldMilliseconds))
             {
                 animationActive = true;
             }
         }
 
-        if (_mouseTrail.Count > 0)
+        if (!_cursorComponentBounds.IsEmpty)
         {
-            animationActive = true;
+            var elapsed =
+                now -
+                _cursorComponentTicks;
+
+            if (elapsed >=
+                ToStopwatchTicks(
+                    CursorComponentHoldMilliseconds +
+                    FadeMilliseconds))
+            {
+                _cursorComponentBounds =
+                    DrawingRectangle.Empty;
+
+                _cursorComponentTicks = 0;
+
+                _maskDirty = true;
+            }
+            else if (elapsed >=
+                     ToStopwatchTicks(
+                         CursorComponentHoldMilliseconds))
+            {
+                animationActive = true;
+            }
         }
 
         return animationActive;
@@ -1410,7 +1496,7 @@ internal sealed class MonitorSession : IDisposable
         long now)
     {
         List<MaskRegion> regions;
-        List<MouseReveal> mouseReveals;
+        List<MouseReveal> cursorReveals;
         double maximumOpacity;
 
         lock (_sync)
@@ -1432,137 +1518,94 @@ internal sealed class MonitorSession : IDisposable
                     ? new List<MaskRegion>()
                     : BuildMaskRegions(
                         now);
-            mouseReveals =
+
+            cursorReveals =
                 revealAll
                     ? new List<MouseReveal>()
-                    : BuildMouseReveals(
-                        now);
+                    : BuildCursorReveal();
         }
 
         _overlay.SetScene(
             maximumOpacity,
             regions,
-            mouseReveals);
+            cursorReveals);
     }
 
     private List<MaskRegion> BuildMaskRegions(
         long now)
     {
-        var result =
+        var regions =
             new List<MaskRegion>(
-                _activeZones.Count +
-                _manualRevealZones.Count +
-                1);
+                _zones.Count +
+                _manualZones.Count +
+                2);
+
         var maximumOpacity =
             _settings
                 .MaximumMaskOpacity;
 
         foreach (var zone in
-                 _activeZones)
+                 _zones)
         {
-            result.Add(
+            var holdMilliseconds =
+                zone.Validated
+                    ? ValidatedHoldMilliseconds
+                    : TransientHoldMilliseconds;
+
+            regions.Add(
                 new MaskRegion(
                     ToNormalizedRect(
                         zone.Bounds),
                     ComputeOpacity(
                         now -
                         zone.LastActivityTicks,
-                        Math.Clamp(
-                            _settings
-                                .MotionZoneRecurringHoldMilliseconds,
-                            500,
-                            10_000),
-                        Math.Clamp(
-                            _settings
-                                .MotionZoneTransientFadeMilliseconds,
-                            80,
-                            1_000),
+                        holdMilliseconds,
+                        FadeMilliseconds,
                         maximumOpacity)));
         }
 
-        if (!_foregroundBounds.IsEmpty)
+        if (!_foregroundRevealBounds.IsEmpty)
         {
-            result.Add(
+            regions.Add(
                 new MaskRegion(
                     ToNormalizedRect(
-                        _foregroundBounds),
+                        _foregroundRevealBounds),
                     ComputeOpacity(
                         now -
                         _foregroundRevealTicks,
-                        Math.Clamp(
-                            _settings
-                                .ForegroundWindowRevealMilliseconds,
-                            400,
-                            5_000),
-                        Math.Clamp(
-                            _settings
-                                .ForegroundWindowFadeMilliseconds,
-                            100,
-                            1_000),
+                        TransientHoldMilliseconds,
+                        FadeMilliseconds,
+                        maximumOpacity)));
+        }
+
+        if (!_cursorComponentBounds.IsEmpty)
+        {
+            regions.Add(
+                new MaskRegion(
+                    ToNormalizedRect(
+                        _cursorComponentBounds),
+                    ComputeOpacity(
+                        now -
+                        _cursorComponentTicks,
+                        CursorComponentHoldMilliseconds,
+                        FadeMilliseconds,
                         maximumOpacity)));
         }
 
         AppendManualZones(
-            result);
+            regions);
 
-        return result;
+        return regions;
     }
 
-    private void AppendManualZones(
-        ICollection<MaskRegion> result)
-    {
-        var screenBounds =
-            _screen.Bounds;
-
-        foreach (var normalized in
-                 _manualRevealZones)
-        {
-            var absolute =
-                DrawingRectangle.FromLTRB(
-                    screenBounds.Left +
-                    (int)Math.Floor(
-                        normalized.Left *
-                        screenBounds.Width),
-                    screenBounds.Top +
-                    (int)Math.Floor(
-                        normalized.Top *
-                        screenBounds.Height),
-                    screenBounds.Left +
-                    (int)Math.Ceiling(
-                        normalized.Right *
-                        screenBounds.Width),
-                    screenBounds.Top +
-                    (int)Math.Ceiling(
-                        normalized.Bottom *
-                        screenBounds.Height));
-            var visible =
-                DrawingRectangle.Intersect(
-                    absolute,
-                    _protectionBounds);
-
-            if (visible.Width <= 0 ||
-                visible.Height <= 0)
-            {
-                continue;
-            }
-
-            result.Add(
-                new MaskRegion(
-                    ToNormalizedRect(
-                        ToLocalBounds(
-                            visible)),
-                    0.0));
-        }
-    }
-
-    private List<MouseReveal> BuildMouseReveals(
-        long now)
+    private List<MouseReveal> BuildCursorReveal()
     {
         var result =
-            new List<MouseReveal>();
+            new List<MouseReveal>(
+                1);
 
-        if (!_settings.MouseVisualEnabled ||
-            !_hasCursor)
+        if (!_hasCursor ||
+            !_settings.MouseVisualEnabled)
         {
             return result;
         }
@@ -1575,86 +1618,201 @@ internal sealed class MonitorSession : IDisposable
                 48);
 
         result.Add(
-            CreateMouseReveal(
-                _cursorX,
-                _cursorY,
-                radius));
-
-        var lifetimeMilliseconds =
-            Math.Clamp(
-                _settings
-                    .MouseTrailMilliseconds,
-                0,
-                250);
-
-        if (lifetimeMilliseconds <= 0)
-        {
-            return result;
-        }
-
-        var lifetimeTicks =
-            Math.Max(
-                1L,
-                ToStopwatchTicks(
-                    lifetimeMilliseconds));
-
-        foreach (var sample in
-                 _mouseTrail)
-        {
-            var age =
-                now -
-                sample.Timestamp;
-
-            if (age < 0 ||
-                age >=
-                lifetimeTicks)
-            {
-                continue;
-            }
-
-            var life =
-                1.0 -
-                age /
-                (double)lifetimeTicks;
-
-            result.Add(
-                CreateMouseReveal(
-                    sample.X,
-                    sample.Y,
+            new MouseReveal(
+                new System.Windows.Point(
+                    _cursorX /
                     Math.Max(
-                        4.0,
-                        radius *
-                        (0.35 +
-                         0.65 *
-                         life))));
-        }
+                        1.0,
+                        _protectionBounds.Width),
+                    _cursorY /
+                    Math.Max(
+                        1.0,
+                        _protectionBounds.Height)),
+                radius /
+                Math.Max(
+                    1.0,
+                    _protectionBounds.Width),
+                radius /
+                Math.Max(
+                    1.0,
+                    _protectionBounds.Height)));
 
         return result;
     }
 
-    private MouseReveal CreateMouseReveal(
-        double localX,
-        double localY,
-        double radius)
+    private void AppendManualZones(
+        ICollection<MaskRegion> regions)
     {
-        return new MouseReveal(
-            new System.Windows.Point(
-                localX /
-                Math.Max(
-                    1.0,
-                    _protectionBounds.Width),
-                localY /
-                Math.Max(
-                    1.0,
-                    _protectionBounds.Height)),
-            radius /
-            Math.Max(
-                1.0,
-                _protectionBounds.Width),
-            radius /
-            Math.Max(
-                1.0,
+        var fullScreen =
+            _screen.Bounds;
+
+        foreach (var normalized in
+                 _manualZones)
+        {
+            var absolute =
+                DrawingRectangle.FromLTRB(
+                    fullScreen.Left +
+                    (int)Math.Floor(
+                        normalized.Left *
+                        fullScreen.Width),
+                    fullScreen.Top +
+                    (int)Math.Floor(
+                        normalized.Top *
+                        fullScreen.Height),
+                    fullScreen.Left +
+                    (int)Math.Ceiling(
+                        normalized.Right *
+                        fullScreen.Width),
+                    fullScreen.Top +
+                    (int)Math.Ceiling(
+                        normalized.Bottom *
+                        fullScreen.Height));
+
+            var visible =
+                DrawingRectangle.Intersect(
+                    absolute,
+                    _protectionBounds);
+
+            if (visible.Width <= 0 ||
+                visible.Height <= 0)
+            {
+                continue;
+            }
+
+            regions.Add(
+                new MaskRegion(
+                    ToNormalizedRect(
+                        ToLocalBounds(
+                            visible)),
+                    0.0));
+        }
+    }
+
+    private bool IsCursorNearRectangle(
+        DrawingRectangle rectangle,
+        int margin)
+    {
+        if (!_hasCursor)
+        {
+            return false;
+        }
+
+        var expanded =
+            rectangle;
+
+        expanded.Inflate(
+            margin,
+            margin);
+
+        return expanded.Contains(
+            (int)Math.Round(
+                _cursorX),
+            (int)Math.Round(
+                _cursorY));
+    }
+
+    private static bool RectanglesConnected(
+        DrawingRectangle first,
+        DrawingRectangle second,
+        int tolerance)
+    {
+        var expanded =
+            first;
+
+        expanded.Inflate(
+            tolerance,
+            tolerance);
+
+        return expanded.IntersectsWith(
+                   second) ||
+               expanded.Contains(
+                   second);
+    }
+
+    private DrawingRectangle ClampLocalRectangle(
+        DrawingRectangle rectangle)
+    {
+        return DrawingRectangle.Intersect(
+            rectangle,
+            new DrawingRectangle(
+                0,
+                0,
+                _protectionBounds.Width,
                 _protectionBounds.Height));
+    }
+
+    private DrawingRectangle ToLocalBounds(
+        DrawingRectangle absolute)
+    {
+        return new DrawingRectangle(
+            absolute.Left -
+            _protectionBounds.Left,
+            absolute.Top -
+            _protectionBounds.Top,
+            absolute.Width,
+            absolute.Height);
+    }
+
+    private WpfRect ToNormalizedRect(
+        DrawingRectangle rectangle)
+    {
+        return new WpfRect(
+            rectangle.Left /
+            (double)Math.Max(
+                1,
+                _protectionBounds.Width),
+            rectangle.Top /
+            (double)Math.Max(
+                1,
+                _protectionBounds.Height),
+            rectangle.Width /
+            (double)Math.Max(
+                1,
+                _protectionBounds.Width),
+            rectangle.Height /
+            (double)Math.Max(
+                1,
+                _protectionBounds.Height));
+    }
+
+    private static WpfRect NormalizeRect(
+        WpfRect rectangle)
+    {
+        var left =
+            Math.Clamp(
+                rectangle.Left,
+                0.0,
+                1.0);
+
+        var top =
+            Math.Clamp(
+                rectangle.Top,
+                0.0,
+                1.0);
+
+        var right =
+            Math.Clamp(
+                rectangle.Right,
+                0.0,
+                1.0);
+
+        var bottom =
+            Math.Clamp(
+                rectangle.Bottom,
+                0.0,
+                1.0);
+
+        if (right <= left ||
+            bottom <= top)
+        {
+            return WpfRect.Empty;
+        }
+
+        return new WpfRect(
+            left,
+            top,
+            right - left,
+            bottom - top);
     }
 
     private static double ComputeOpacity(
@@ -1678,6 +1836,7 @@ internal sealed class MonitorSession : IDisposable
                 1L,
                 ToStopwatchTicks(
                     fadeMilliseconds));
+
         var progress =
             Math.Clamp(
                 (elapsedTicks -
@@ -1690,137 +1849,15 @@ internal sealed class MonitorSession : IDisposable
                progress;
     }
 
-    private bool IsCursorNear(
-        DrawingRectangle bounds,
-        int margin)
-    {
-        if (!_hasCursor)
-        {
-            return false;
-        }
-
-        var expanded =
-            bounds;
-        expanded.Inflate(
-            margin,
-            margin);
-
-        return expanded.Contains(
-            (int)Math.Round(
-                _cursorX),
-            (int)Math.Round(
-                _cursorY));
-    }
-
-    private static bool RectanglesNear(
-        DrawingRectangle first,
-        DrawingRectangle second,
-        int maximumGap)
-    {
-        var expanded =
-            first;
-        expanded.Inflate(
-            maximumGap,
-            maximumGap);
-
-        return expanded.IntersectsWith(
-                   second) ||
-               expanded.Contains(
-                   second);
-    }
-
-    private DrawingRectangle ClampLocalBounds(
-        DrawingRectangle bounds)
-    {
-        var local =
-            new DrawingRectangle(
-                0,
-                0,
-                _protectionBounds.Width,
-                _protectionBounds.Height);
-
-        return DrawingRectangle.Intersect(
-            bounds,
-            local);
-    }
-
-    private DrawingRectangle ToLocalBounds(
-        DrawingRectangle absolute)
-    {
-        return new DrawingRectangle(
-            absolute.Left -
-            _protectionBounds.Left,
-            absolute.Top -
-            _protectionBounds.Top,
-            absolute.Width,
-            absolute.Height);
-    }
-
-    private WpfRect ToNormalizedRect(
-        DrawingRectangle local)
-    {
-        return new WpfRect(
-            local.Left /
-            (double)Math.Max(
-                1,
-                _protectionBounds.Width),
-            local.Top /
-            (double)Math.Max(
-                1,
-                _protectionBounds.Height),
-            local.Width /
-            (double)Math.Max(
-                1,
-                _protectionBounds.Width),
-            local.Height /
-            (double)Math.Max(
-                1,
-                _protectionBounds.Height));
-    }
-
-    private static WpfRect NormalizeRect(
-        WpfRect rect)
-    {
-        var left =
-            Math.Clamp(
-                rect.Left,
-                0.0,
-                1.0);
-        var top =
-            Math.Clamp(
-                rect.Top,
-                0.0,
-                1.0);
-        var right =
-            Math.Clamp(
-                rect.Right,
-                0.0,
-                1.0);
-        var bottom =
-            Math.Clamp(
-                rect.Bottom,
-                0.0,
-                1.0);
-
-        return right <= left ||
-               bottom <= top
-            ? WpfRect.Empty
-            : new WpfRect(
-                left,
-                top,
-                right - left,
-                bottom - top);
-    }
-
-    private void CopyCurrentToPrevious(
-        byte[] current)
+    private void CopyFrame(
+        byte[] currentFrame)
     {
         Buffer.BlockCopy(
-            current,
+            currentFrame,
             0,
             _previousFrame,
             0,
-            current.Length);
+            currentFrame.Length);
     }
 
     private static long ToStopwatchTicks(
@@ -1864,6 +1901,7 @@ internal sealed class MonitorSession : IDisposable
         {
             CompositionTarget.Rendering -=
                 OnRendering;
+
             _renderSubscribed = false;
         }
 
