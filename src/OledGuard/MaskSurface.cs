@@ -103,7 +103,10 @@ internal sealed class MaskSurface : FrameworkElement
 
             var rectangle =
                 CreateRectangleGeometry(
-                    region.NormalizedBounds);
+                    region.NormalizedBounds,
+                    region.Opacity <= 0.0001
+                        ? 2.0
+                        : 0.0);
 
             if (rectangle is null)
             {
@@ -173,7 +176,8 @@ internal sealed class MaskSurface : FrameworkElement
             {
                 var rectangle =
                     CreateRectangleGeometry(
-                        region.NormalizedBounds);
+                        region.NormalizedBounds,
+                        0.0);
 
                 if (rectangle is null)
                 {
@@ -216,7 +220,8 @@ internal sealed class MaskSurface : FrameworkElement
     }
 
     private Geometry? CreateRectangleGeometry(
-        Rect normalized)
+        Rect normalized,
+        double clearExpansionPixels)
     {
         var left =
             Math.Floor(
@@ -247,11 +252,34 @@ internal sealed class MaskSurface : FrameworkElement
                     1.0) *
                 ActualHeight);
 
-        const double seamBleed = 1.0;
-        left = Math.Max(0.0, left - seamBleed);
-        top = Math.Max(0.0, top - seamBleed);
-        right = Math.Min(ActualWidth, right + seamBleed);
-        bottom = Math.Min(ActualHeight, bottom + seamBleed);
+        // Les zones sombres restent strictement dans leurs pixels.
+        // Seuls les trous totalement clairs gagnent une marge de sécurité :
+        // aucun morceau sombre arrondi par WPF ne peut alors rentrer dedans.
+        var expansion =
+            Math.Max(
+                0.0,
+                clearExpansionPixels);
+
+        left =
+            Math.Max(
+                0.0,
+                left -
+                expansion);
+        top =
+            Math.Max(
+                0.0,
+                top -
+                expansion);
+        right =
+            Math.Min(
+                ActualWidth,
+                right +
+                expansion);
+        bottom =
+            Math.Min(
+                ActualHeight,
+                bottom +
+                expansion);
 
         if (right <= left ||
             bottom <= top)
