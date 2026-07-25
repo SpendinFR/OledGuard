@@ -43,7 +43,7 @@ internal sealed class OverlayWindow : Window
             true;
 
         Background =
-            Brushes.Transparent;
+            System.Windows.Media.Brushes.Transparent;
 
         ShowInTaskbar =
             false;
