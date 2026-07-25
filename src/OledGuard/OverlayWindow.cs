@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 using FormsScreen = System.Windows.Forms.Screen;
@@ -6,6 +7,9 @@ namespace OledGuard;
 
 internal sealed class OverlayWindow : Window
 {
+    private const int ActivationEdgePixels =
+        4;
+
     private readonly FormsScreen _screen;
     private readonly MaskSurface _surface;
     private IntPtr _handle;
@@ -24,7 +28,9 @@ internal sealed class OverlayWindow : Window
             ResizeMode.NoResize;
         AllowsTransparency = true;
         Background =
-            System.Windows.Media.Brushes.Transparent;
+            System.Windows.Media
+                .Brushes
+                .Transparent;
         ShowInTaskbar = false;
         ShowActivated = false;
         Topmost = true;
@@ -42,32 +48,30 @@ internal sealed class OverlayWindow : Window
         private set;
     }
 
-    public void SetScene(
-        double maximumOpacity,
-        IReadOnlyList<MaskRegion> regions,
-        IReadOnlyList<MouseReveal> mouseReveals)
+    public void SetMask(
+        IReadOnlyList<float> alpha,
+        int columns,
+        int rows)
     {
         if (!Dispatcher.CheckAccess())
         {
-            var regionCopy =
-                regions.ToArray();
-            var mouseCopy =
-                mouseReveals.ToArray();
+            var copy =
+                alpha.ToArray();
 
             Dispatcher.BeginInvoke(
                 new Action(
                     () =>
-                        SetScene(
-                            maximumOpacity,
-                            regionCopy,
-                            mouseCopy)));
+                        SetMask(
+                            copy,
+                            columns,
+                            rows)));
             return;
         }
 
-        _surface.UpdateScene(
-            maximumOpacity,
-            regions,
-            mouseReveals);
+        _surface.UpdateMask(
+            alpha,
+            columns,
+            rows);
     }
 
     public void EnsureVisible()
@@ -85,7 +89,8 @@ internal sealed class OverlayWindow : Window
         EventArgs e)
     {
         _handle =
-            new WindowInteropHelper(this)
+            new WindowInteropHelper(
+                this)
                 .Handle;
         _source =
             HwndSource.FromHwnd(
@@ -136,19 +141,6 @@ internal sealed class OverlayWindow : Window
         return IntPtr.Zero;
     }
 
-    protected override void OnClosed(
-        EventArgs e)
-    {
-        if (_source is not null)
-        {
-            _source.RemoveHook(
-                WindowProcedure);
-            _source = null;
-        }
-
-        base.OnClosed(e);
-    }
-
     private void PlaceExactly()
     {
         if (_handle ==
@@ -169,5 +161,89 @@ internal sealed class OverlayWindow : Window
             bounds.Height,
             NativeMethods.SwpNoActivate |
             NativeMethods.SwpShowWindow);
+
+        ApplyActivationEdgeRegion(
+            bounds.Width,
+            bounds.Height);
     }
+
+    private void ApplyActivationEdgeRegion(
+        int width,
+        int height)
+    {
+        if (_handle ==
+                IntPtr.Zero ||
+            width <=
+                ActivationEdgePixels *
+                2 ||
+            height <=
+                ActivationEdgePixels *
+                2)
+        {
+            return;
+        }
+
+        var region =
+            CreateRectRgn(
+                ActivationEdgePixels,
+                ActivationEdgePixels,
+                width -
+                    ActivationEdgePixels,
+                height -
+                    ActivationEdgePixels);
+
+        if (region ==
+            IntPtr.Zero)
+        {
+            return;
+        }
+
+        if (SetWindowRgn(
+                _handle,
+                region,
+                true) == 0)
+        {
+            DeleteRegionObject(
+                region);
+        }
+        // On success Windows owns the region handle.
+    }
+
+    protected override void OnClosed(
+        EventArgs e)
+    {
+        if (_source is not null)
+        {
+            _source.RemoveHook(
+                WindowProcedure);
+            _source = null;
+        }
+
+        base.OnClosed(
+            e);
+    }
+
+    [DllImport("gdi32.dll")]
+    private static extern IntPtr
+        CreateRectRgn(
+            int left,
+            int top,
+            int right,
+            int bottom);
+
+    [DllImport("user32.dll")]
+    private static extern int
+        SetWindowRgn(
+            IntPtr window,
+            IntPtr region,
+            [MarshalAs(UnmanagedType.Bool)]
+            bool redraw);
+
+    [DllImport(
+        "gdi32.dll",
+        EntryPoint = "DeleteObject")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool
+        DeleteRegionObject(
+            IntPtr graphicObject);
 }
