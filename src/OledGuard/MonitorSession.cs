@@ -2274,7 +2274,243 @@ internal sealed partial class MonitorSession : IDisposable
         AppendInteractionReveal(
             result);
 
+        // Une zone totalement révélée doit être un trou uniforme et
+        // prioritaire. On retire physiquement sa surface des régions plus
+        // sombres avant le rendu, au lieu de laisser WPF superposer plusieurs
+        // géométries qui peuvent former des bandes à l'intérieur du rectangle.
+        MakeClearRegionsDominant(
+            result);
+
         return result;
+    }
+
+    private static void MakeClearRegionsDominant(
+        List<MaskRegion> regions)
+    {
+        if (regions.Count < 2)
+        {
+            return;
+        }
+
+        var clearBounds =
+            regions
+                .Where(
+                    region =>
+                        region.Opacity <=
+                        0.0001)
+                .Select(
+                    region =>
+                        ClampNormalizedRect(
+                            region.NormalizedBounds))
+                .Where(
+                    bounds =>
+                        bounds.Width >
+                            0.000001 &&
+                        bounds.Height >
+                            0.000001)
+                .ToArray();
+
+        if (clearBounds.Length == 0)
+        {
+            return;
+        }
+
+        var rebuilt =
+            new List<MaskRegion>(
+                regions.Count +
+                clearBounds.Length *
+                2);
+
+        foreach (var region in
+                 regions)
+        {
+            if (region.Opacity <=
+                0.0001)
+            {
+                continue;
+            }
+
+            var initial =
+                ClampNormalizedRect(
+                    region.NormalizedBounds);
+
+            if (initial.Width <=
+                    0.000001 ||
+                initial.Height <=
+                    0.000001)
+            {
+                continue;
+            }
+
+            var pieces =
+                new List<Rect>
+                {
+                    initial
+                };
+
+            foreach (var clear in
+                     clearBounds)
+            {
+                for (var index =
+                         pieces.Count -
+                         1;
+                     index >= 0;
+                     index--)
+                {
+                    var source =
+                        pieces[index];
+
+                    var intersection =
+                        Rect.Intersect(
+                            source,
+                            clear);
+
+                    if (intersection.IsEmpty ||
+                        intersection.Width <=
+                            0.000001 ||
+                        intersection.Height <=
+                            0.000001)
+                    {
+                        continue;
+                    }
+
+                    pieces.RemoveAt(
+                        index);
+
+                    AppendRectangleDifference(
+                        pieces,
+                        source,
+                        intersection);
+                }
+
+                if (pieces.Count == 0)
+                {
+                    break;
+                }
+            }
+
+            foreach (var piece in
+                     pieces)
+            {
+                rebuilt.Add(
+                    new MaskRegion(
+                        piece,
+                        region.Opacity));
+            }
+        }
+
+        // Les trous clairs sont ajoutés une seule fois après les régions
+        // découpées. Aucun masque intermédiaire ne peut donc être redessiné
+        // à l'intérieur de leur rectangle.
+        foreach (var clear in
+                 clearBounds)
+        {
+            rebuilt.Add(
+                new MaskRegion(
+                    clear,
+                    0.0));
+        }
+
+        regions.Clear();
+        regions.AddRange(
+            rebuilt);
+    }
+
+    private static void AppendRectangleDifference(
+        List<Rect> destination,
+        Rect source,
+        Rect intersection)
+    {
+        AppendNonEmptyRect(
+            destination,
+            new Rect(
+                source.Left,
+                source.Top,
+                source.Width,
+                intersection.Top -
+                source.Top));
+
+        AppendNonEmptyRect(
+            destination,
+            new Rect(
+                source.Left,
+                intersection.Bottom,
+                source.Width,
+                source.Bottom -
+                intersection.Bottom));
+
+        AppendNonEmptyRect(
+            destination,
+            new Rect(
+                source.Left,
+                intersection.Top,
+                intersection.Left -
+                source.Left,
+                intersection.Height));
+
+        AppendNonEmptyRect(
+            destination,
+            new Rect(
+                intersection.Right,
+                intersection.Top,
+                source.Right -
+                intersection.Right,
+                intersection.Height));
+    }
+
+    private static void AppendNonEmptyRect(
+        List<Rect> destination,
+        Rect rectangle)
+    {
+        if (rectangle.Width <=
+                0.000001 ||
+            rectangle.Height <=
+                0.000001)
+        {
+            return;
+        }
+
+        destination.Add(
+            rectangle);
+    }
+
+    private static Rect ClampNormalizedRect(
+        Rect rectangle)
+    {
+        var left =
+            Math.Clamp(
+                rectangle.Left,
+                0.0,
+                1.0);
+        var top =
+            Math.Clamp(
+                rectangle.Top,
+                0.0,
+                1.0);
+        var right =
+            Math.Clamp(
+                rectangle.Right,
+                0.0,
+                1.0);
+        var bottom =
+            Math.Clamp(
+                rectangle.Bottom,
+                0.0,
+                1.0);
+
+        if (right <= left ||
+            bottom <= top)
+        {
+            return Rect.Empty;
+        }
+
+        return new Rect(
+            left,
+            top,
+            right -
+            left,
+            bottom -
+            top);
     }
 
     private List<MouseReveal> BuildMouseReveals(

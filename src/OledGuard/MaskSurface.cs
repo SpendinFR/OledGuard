@@ -16,6 +16,13 @@ internal sealed class MaskSurface : FrameworkElement
         IsHitTestVisible = false;
         SnapsToDevicePixels = true;
         UseLayoutRounding = true;
+
+        // Les rectangles du masque sont déjà alignés sur les pixels.
+        // Désactiver l'anticrénelage géométrique empêche les lignes sombres
+        // parallèles d'apparaître entre des bandes adjacentes.
+        RenderOptions.SetEdgeMode(
+            this,
+            EdgeMode.Aliased);
     }
 
     public void UpdateScene(
