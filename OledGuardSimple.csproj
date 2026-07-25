@@ -7,17 +7,15 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <PlatformTarget>x64</PlatformTarget>
-    <Platforms>x64</Platforms>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>OledGuardSimple</AssemblyName>
     <RootNamespace>OledGuardSimple</RootNamespace>
-    <Version>1.0.0</Version>
-    <Product>OledGuardSimple</Product>
-    <Description>Masque OLED minimal par fenêtre active, zones actives et curseur.</Description>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <DebugType>embedded</DebugType>
+    <Version>1.0.0</Version>
   </PropertyGroup>
 </Project>

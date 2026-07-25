@@ -9,36 +9,34 @@ internal static class NativeMethods
     public const long WsExToolWindow = 0x00000080L;
     public const long WsExNoActivate = 0x08000000L;
 
-    public const uint SwpNoActivate = 0x0010;
-    public const uint SwpShowWindow = 0x0040;
-    public const uint WdaExcludeFromCapture = 0x00000011;
-
-    public const int WmHotKey = 0x0312;
     public const int WmNcHitTest = 0x0084;
     public const int HtTransparent = -1;
 
-    public const uint ModAlt = 0x0001;
-    public const uint ModControl = 0x0002;
-    public const uint VkO = 0x4F;
-    public const uint VkQ = 0x51;
+    public const uint WdaExcludeFromCapture = 0x00000011;
+    public const uint SwpNoActivate = 0x0010;
+    public const uint SwpShowWindow = 0x0040;
 
     public const int Srccopy = 0x00CC0020;
     public const int Halftone = 4;
     public const uint DibRgbColors = 0;
     public const int BiRgb = 0;
 
-    public static readonly IntPtr HwndTopmost = new(-1);
-    public static readonly IntPtr DpiAwarenessContextPerMonitorAwareV2 = new(-4);
+    public static readonly IntPtr HwndTopmost =
+        new(-1);
+
+    private static readonly IntPtr
+        DpiAwarenessContextPerMonitorAwareV2 =
+            new(-4);
 
     [StructLayout(LayoutKind.Sequential)]
-    internal struct NativePoint
+    public struct Point
     {
         public int X;
         public int Y;
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    internal struct NativeRectangle
+    public struct Rect
     {
         public int Left;
         public int Top;
@@ -47,26 +45,38 @@ internal static class NativeMethods
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    internal struct BitmapInfoHeader
+    public struct BitmapInfoHeader
     {
-        public uint biSize;
-        public int biWidth;
-        public int biHeight;
-        public ushort biPlanes;
-        public ushort biBitCount;
-        public int biCompression;
-        public uint biSizeImage;
-        public int biXPelsPerMeter;
-        public int biYPelsPerMeter;
-        public uint biClrUsed;
-        public uint biClrImportant;
+        public uint Size;
+        public int Width;
+        public int Height;
+        public ushort Planes;
+        public ushort BitCount;
+        public int Compression;
+        public uint SizeImage;
+        public int XPelsPerMeter;
+        public int YPelsPerMeter;
+        public uint ColorsUsed;
+        public uint ColorsImportant;
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    internal struct BitmapInfo
+    public struct BitmapInfo
     {
-        public BitmapInfoHeader bmiHeader;
-        public uint bmiColors;
+        public BitmapInfoHeader Header;
+        public uint Colors;
+    }
+
+    public static void TryEnablePerMonitorDpiAwareness()
+    {
+        try
+        {
+            SetProcessDpiAwarenessContext(
+                DpiAwarenessContextPerMonitorAwareV2);
+        }
+        catch
+        {
+        }
     }
 
     [DllImport("user32.dll")]
@@ -77,7 +87,7 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetCursorPos(
-        out NativePoint point);
+        out Point point);
 
     [DllImport("user32.dll")]
     public static extern IntPtr GetForegroundWindow();
@@ -86,44 +96,42 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetWindowRect(
         IntPtr window,
-        out NativeRectangle rectangle);
+        out Rect rectangle);
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [DllImport(
+        "user32.dll",
+        CharSet = CharSet.Unicode)]
     public static extern int GetClassName(
         IntPtr window,
         System.Text.StringBuilder className,
         int maximumCharacters);
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    public static extern IntPtr FindWindow(
-        string? className,
-        string? windowName);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    public static extern IntPtr FindWindowEx(
-        IntPtr parent,
-        IntPtr childAfter,
-        string? className,
-        string? windowName);
-
-    [DllImport("user32.dll", SetLastError = true)]
+    [DllImport(
+        "user32.dll",
+        SetLastError = true)]
     public static extern IntPtr GetWindowLongPtr(
         IntPtr window,
         int index);
 
-    [DllImport("user32.dll", SetLastError = true)]
+    [DllImport(
+        "user32.dll",
+        SetLastError = true)]
     public static extern IntPtr SetWindowLongPtr(
         IntPtr window,
         int index,
-        IntPtr value);
+        IntPtr newValue);
 
-    [DllImport("user32.dll", SetLastError = true)]
+    [DllImport(
+        "user32.dll",
+        SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetWindowDisplayAffinity(
         IntPtr window,
         uint affinity);
 
-    [DllImport("user32.dll", SetLastError = true)]
+    [DllImport(
+        "user32.dll",
+        SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetWindowPos(
         IntPtr window,
@@ -134,22 +142,9 @@ internal static class NativeMethods
         int height,
         uint flags);
 
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool RegisterHotKey(
-        IntPtr window,
-        int id,
-        uint modifiers,
-        uint virtualKey);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool UnregisterHotKey(
-        IntPtr window,
-        int id);
-
     [DllImport("user32.dll")]
-    public static extern IntPtr GetDC(IntPtr window);
+    public static extern IntPtr GetDC(
+        IntPtr window);
 
     [DllImport("user32.dll")]
     public static extern int ReleaseDC(
@@ -168,12 +163,12 @@ internal static class NativeMethods
     [DllImport("gdi32.dll")]
     public static extern IntPtr SelectObject(
         IntPtr deviceContext,
-        IntPtr value);
+        IntPtr graphicObject);
 
     [DllImport("gdi32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool DeleteObject(
-        IntPtr value);
+        IntPtr graphicObject);
 
     [DllImport("gdi32.dll")]
     public static extern IntPtr CreateDIBSection(
@@ -195,9 +190,11 @@ internal static class NativeMethods
         IntPtr deviceContext,
         int x,
         int y,
-        IntPtr previous);
+        IntPtr previousPoint);
 
-    [DllImport("gdi32.dll", SetLastError = true)]
+    [DllImport(
+        "gdi32.dll",
+        SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool StretchBlt(
         IntPtr destination,
@@ -211,17 +208,4 @@ internal static class NativeMethods
         int sourceWidth,
         int sourceHeight,
         int rasterOperation);
-
-    public static void TryEnablePerMonitorDpiAwareness()
-    {
-        try
-        {
-            SetProcessDpiAwarenessContext(
-                DpiAwarenessContextPerMonitorAwareV2);
-        }
-        catch
-        {
-            // Le manifeste demande aussi PerMonitorV2.
-        }
-    }
 }

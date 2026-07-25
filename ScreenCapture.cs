@@ -6,11 +6,16 @@ namespace OledGuardSimple;
 internal sealed class ScreenCapture : IDisposable
 {
     private readonly DrawingRectangle _sourceBounds;
-    private readonly IntPtr _screenDeviceContext;
-    private readonly IntPtr _memoryDeviceContext;
-    private readonly IntPtr _bitmap;
-    private readonly IntPtr _previousBitmap;
-    private readonly IntPtr _bits;
+    private readonly int _width;
+    private readonly int _height;
+    private readonly int _stride;
+    private readonly byte[] _buffer;
+
+    private IntPtr _screenDc;
+    private IntPtr _memoryDc;
+    private IntPtr _bitmap;
+    private IntPtr _previousBitmap;
+    private IntPtr _bits;
     private bool _disposed;
 
     public ScreenCapture(
@@ -18,82 +23,107 @@ internal sealed class ScreenCapture : IDisposable
         int width,
         int height)
     {
-        _sourceBounds = sourceBounds;
-        Width = width;
-        Height = height;
-        Stride = checked(width * 4);
+        _sourceBounds =
+            sourceBounds;
 
-        _screenDeviceContext = NativeMethods.GetDC(
-            IntPtr.Zero);
+        _width =
+            width;
 
-        if (_screenDeviceContext == IntPtr.Zero)
+        _height =
+            height;
+
+        _stride =
+            checked(
+                width *
+                4);
+
+        _buffer =
+            new byte[
+                checked(
+                    _stride *
+                    height)];
+
+        _screenDc =
+            NativeMethods.GetDC(
+                IntPtr.Zero);
+
+        if (_screenDc ==
+            IntPtr.Zero)
         {
             throw new InvalidOperationException(
-                "Impossible d'obtenir le contexte écran.");
+                "Impossible d'ouvrir l'écran.");
         }
 
-        _memoryDeviceContext = NativeMethods.CreateCompatibleDC(
-            _screenDeviceContext);
+        _memoryDc =
+            NativeMethods.CreateCompatibleDC(
+                _screenDc);
 
-        if (_memoryDeviceContext == IntPtr.Zero)
+        if (_memoryDc ==
+            IntPtr.Zero)
         {
-            NativeMethods.ReleaseDC(
-                IntPtr.Zero,
-                _screenDeviceContext);
-
+            Dispose();
             throw new InvalidOperationException(
                 "Impossible de créer le contexte de capture.");
         }
 
-        var bitmapInfo = new NativeMethods.BitmapInfo
-        {
-            bmiHeader = new NativeMethods.BitmapInfoHeader
+        var bitmapInfo =
+            new NativeMethods.BitmapInfo
             {
-                biSize = (uint)Marshal.SizeOf<NativeMethods.BitmapInfoHeader>(),
-                biWidth = width,
-                biHeight = -height,
-                biPlanes = 1,
-                biBitCount = 32,
-                biCompression = NativeMethods.BiRgb,
-                biSizeImage = (uint)checked(Stride * height)
-            }
-        };
+                Header =
+                    new NativeMethods.BitmapInfoHeader
+                    {
+                        Size =
+                            (uint)Marshal.SizeOf<
+                                NativeMethods.BitmapInfoHeader>(),
+                        Width =
+                            width,
+                        Height =
+                            -height,
+                        Planes =
+                            1,
+                        BitCount =
+                            32,
+                        Compression =
+                            NativeMethods.BiRgb
+                    }
+            };
 
-        _bitmap = NativeMethods.CreateDIBSection(
-            _screenDeviceContext,
-            ref bitmapInfo,
-            NativeMethods.DibRgbColors,
-            out _bits,
-            IntPtr.Zero,
-            0);
-
-        if (_bitmap == IntPtr.Zero ||
-            _bits == IntPtr.Zero)
-        {
-            NativeMethods.DeleteDC(_memoryDeviceContext);
-            NativeMethods.ReleaseDC(
+        _bitmap =
+            NativeMethods.CreateDIBSection(
+                _screenDc,
+                ref bitmapInfo,
+                NativeMethods.DibRgbColors,
+                out _bits,
                 IntPtr.Zero,
-                _screenDeviceContext);
+                0);
 
+        if (_bitmap ==
+                IntPtr.Zero ||
+            _bits ==
+                IntPtr.Zero)
+        {
+            Dispose();
             throw new InvalidOperationException(
                 "Impossible de créer le tampon de capture.");
         }
 
-        _previousBitmap = NativeMethods.SelectObject(
-            _memoryDeviceContext,
-            _bitmap);
+        _previousBitmap =
+            NativeMethods.SelectObject(
+                _memoryDc,
+                _bitmap);
 
         NativeMethods.SetStretchBltMode(
-            _memoryDeviceContext,
+            _memoryDc,
             NativeMethods.Halftone);
+
+        NativeMethods.SetBrushOrgEx(
+            _memoryDc,
+            0,
+            0,
+            IntPtr.Zero);
     }
 
-    public int Width { get; }
-    public int Height { get; }
-    public int Stride { get; }
-    public int BufferLength => checked(Stride * Height);
-
-    public void CaptureInto(byte[] destination)
+    public byte[] Capture()
     {
         if (_disposed)
         {
@@ -101,31 +131,19 @@ internal sealed class ScreenCapture : IDisposable
                 nameof(ScreenCapture));
         }
 
-        if (destination.Length < BufferLength)
-        {
-            throw new ArgumentException(
-                "Tampon de capture trop petit.",
-                nameof(destination));
-        }
-
-        NativeMethods.SetBrushOrgEx(
-            _memoryDeviceContext,
-            0,
-            0,
-            IntPtr.Zero);
-
-        var copied = NativeMethods.StretchBlt(
-            _memoryDeviceContext,
-            0,
-            0,
-            Width,
-            Height,
-            _screenDeviceContext,
-            _sourceBounds.Left,
-            _sourceBounds.Top,
-            _sourceBounds.Width,
-            _sourceBounds.Height,
-            NativeMethods.Srccopy);
+        var copied =
+            NativeMethods.StretchBlt(
+                _memoryDc,
+                0,
+                0,
+                _width,
+                _height,
+                _screenDc,
+                _sourceBounds.Left,
+                _sourceBounds.Top,
+                _sourceBounds.Width,
+                _sourceBounds.Height,
+                NativeMethods.Srccopy);
 
         if (!copied)
         {
@@ -135,9 +153,11 @@ internal sealed class ScreenCapture : IDisposable
 
         Marshal.Copy(
             _bits,
-            destination,
+            _buffer,
             0,
-            BufferLength);
+            _buffer.Length);
+
+        return _buffer;
     }
 
     public void Dispose()
@@ -149,28 +169,51 @@ internal sealed class ScreenCapture : IDisposable
 
         _disposed = true;
 
-        if (_previousBitmap != IntPtr.Zero)
+        if (_memoryDc !=
+                IntPtr.Zero &&
+            _previousBitmap !=
+                IntPtr.Zero)
         {
             NativeMethods.SelectObject(
-                _memoryDeviceContext,
+                _memoryDc,
                 _previousBitmap);
+
+            _previousBitmap =
+                IntPtr.Zero;
         }
 
-        if (_bitmap != IntPtr.Zero)
+        if (_bitmap !=
+            IntPtr.Zero)
         {
-            NativeMethods.DeleteObject(_bitmap);
+            NativeMethods.DeleteObject(
+                _bitmap);
+
+            _bitmap =
+                IntPtr.Zero;
         }
 
-        if (_memoryDeviceContext != IntPtr.Zero)
+        if (_memoryDc !=
+            IntPtr.Zero)
         {
-            NativeMethods.DeleteDC(_memoryDeviceContext);
+            NativeMethods.DeleteDC(
+                _memoryDc);
+
+            _memoryDc =
+                IntPtr.Zero;
         }
 
-        if (_screenDeviceContext != IntPtr.Zero)
+        if (_screenDc !=
+            IntPtr.Zero)
         {
             NativeMethods.ReleaseDC(
                 IntPtr.Zero,
-                _screenDeviceContext);
+                _screenDc);
+
+            _screenDc =
+                IntPtr.Zero;
         }
+
+        _bits =
+            IntPtr.Zero;
     }
 }

@@ -22,14 +22,8 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Restore
-        run: dotnet restore "OledGuardSimple.csproj"
-
-      - name: Build
-        run: dotnet build "OledGuardSimple.csproj" -c Release --no-restore
-
-      - name: Publish Windows x64
-        run: dotnet publish "OledGuardSimple.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false -o publish
+      - name: Publish
+        run: dotnet publish OledGuardSimple.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false -o publish
 
       - name: Upload executable
         uses: actions/upload-artifact@v4
