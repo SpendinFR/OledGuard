@@ -1,31 +1,13 @@
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
-    Write-Host 'Le SDK .NET 8 x64 est requis pour compiler OledGuard.' -ForegroundColor Yellow
-    Write-Host 'Installez le SDK .NET 8, puis relancez build.cmd.'
-    exit 1
-}
-
-$project = Join-Path $PSScriptRoot 'src\OledGuard\OledGuard.csproj'
-$output = Join-Path $PSScriptRoot 'dist\OledGuard'
-
-if (Test-Path $output) {
-    Remove-Item $output -Recurse -Force
-}
-
-Write-Host 'Publication de OledGuard...' -ForegroundColor Cyan
-
-dotnet publish $project `
+dotnet publish .\OledGuardSimple.csproj `
   -c Release `
   -r win-x64 `
   --self-contained true `
-  -p:PublishSingleFile=true `
-  -p:PublishReadyToRun=true `
-  -p:DebugType=None `
-  -p:DebugSymbols=false `
-  -o $output
+  -p:PublishSingleFile=true
 
-Write-Host ''
-Write-Host 'Compilation terminée :' -ForegroundColor Green
-Write-Host (Join-Path $output 'OledGuard.exe')
+Write-Host ""
+Write-Host "EXE créé dans :"
+Write-Host "$PSScriptRootin\Release
+et8.0-windows\win-x64\publish\OledGuardSimple.exe"

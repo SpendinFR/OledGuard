@@ -1,81 +1,57 @@
 using System.Windows;
 using System.Windows.Interop;
+using DrawingRectangle = System.Drawing.Rectangle;
 using FormsScreen = System.Windows.Forms.Screen;
 
-namespace OledGuard;
+namespace OledGuardSimple;
 
 internal sealed class OverlayWindow : Window
 {
     private readonly FormsScreen _screen;
-    private readonly System.Drawing.Rectangle
-        _protectionBounds;
+    private readonly DrawingRectangle _protectionBounds;
     private readonly MaskSurface _surface;
-
     private IntPtr _handle;
     private HwndSource? _source;
 
     public OverlayWindow(
-        FormsScreen screen)
+        FormsScreen screen,
+        DrawingRectangle protectionBounds)
     {
         _screen = screen;
+        _protectionBounds = protectionBounds;
+        _surface = new MaskSurface();
 
-        _protectionBounds =
-            ProtectionArea.GetBounds(
-                screen);
-
-        _surface =
-            new MaskSurface();
-
-        WindowStyle =
-            WindowStyle.None;
-
-        ResizeMode =
-            ResizeMode.NoResize;
-
+        WindowStyle = WindowStyle.None;
+        ResizeMode = ResizeMode.NoResize;
         AllowsTransparency = true;
-
-        Background =
-            System.Windows.Media.Brushes.Transparent;
-
+        Background = System.Windows.Media.Brushes.Transparent;
         ShowInTaskbar = false;
         ShowActivated = false;
         Topmost = true;
         Focusable = false;
         IsHitTestVisible = false;
+        Content = _surface;
 
-        Content =
-            _surface;
-
-        SourceInitialized +=
-            OnSourceInitialized;
+        SourceInitialized += OnSourceInitialized;
     }
 
-    public bool ExcludedFromCapture
-    {
-        get;
-        private set;
-    }
+    public bool ExcludedFromCapture { get; private set; }
 
     public void SetScene(
         double maximumOpacity,
-        IReadOnlyList<MaskRegion> regions,
-        IReadOnlyList<MouseReveal> cursorReveals)
+        IReadOnlyList<RevealRegion> regions,
+        IReadOnlyList<CursorHole> cursorHoles)
     {
         if (!Dispatcher.CheckAccess())
         {
-            var regionCopy =
-                regions.ToArray();
-
-            var cursorCopy =
-                cursorReveals.ToArray();
+            var regionCopy = regions.ToArray();
+            var cursorCopy = cursorHoles.ToArray();
 
             Dispatcher.BeginInvoke(
-                new Action(
-                    () =>
-                        SetScene(
-                            maximumOpacity,
-                            regionCopy,
-                            cursorCopy)));
+                new Action(() => SetScene(
+                    maximumOpacity,
+                    regionCopy,
+                    cursorCopy)));
 
             return;
         }
@@ -83,7 +59,7 @@ internal sealed class OverlayWindow : Window
         _surface.UpdateScene(
             maximumOpacity,
             regions,
-            cursorReveals);
+            cursorHoles);
     }
 
     public void EnsureVisible()
@@ -91,9 +67,7 @@ internal sealed class OverlayWindow : Window
         if (!Dispatcher.CheckAccess())
         {
             Dispatcher.BeginInvoke(
-                new Action(
-                    EnsureVisible));
-
+                new Action(EnsureVisible));
             return;
         }
 
@@ -109,34 +83,24 @@ internal sealed class OverlayWindow : Window
         object? sender,
         EventArgs eventArgs)
     {
-        _handle =
-            new WindowInteropHelper(
-                this).Handle;
+        _handle = new WindowInteropHelper(this).Handle;
+        _source = HwndSource.FromHwnd(_handle);
+        _source?.AddHook(WindowProcedure);
 
-        _source =
-            HwndSource.FromHwnd(
-                _handle);
+        var currentStyle = NativeMethods.GetWindowLongPtr(
+                _handle,
+                NativeMethods.GwlExStyle)
+            .ToInt64();
 
-        _source?.AddHook(
-            WindowProcedure);
-
-        var currentStyle =
-            NativeMethods.GetWindowLongPtr(
-                    _handle,
-                    NativeMethods.GwlExStyle)
-                .ToInt64();
-
-        var updatedStyle =
-            currentStyle |
-            NativeMethods.WsExTransparent |
-            NativeMethods.WsExToolWindow |
-            NativeMethods.WsExNoActivate;
+        var updatedStyle = currentStyle |
+                           NativeMethods.WsExTransparent |
+                           NativeMethods.WsExToolWindow |
+                           NativeMethods.WsExNoActivate;
 
         NativeMethods.SetWindowLongPtr(
             _handle,
             NativeMethods.GwlExStyle,
-            new IntPtr(
-                updatedStyle));
+            new IntPtr(updatedStyle));
 
         ExcludedFromCapture =
             NativeMethods.SetWindowDisplayAffinity(
@@ -153,13 +117,10 @@ internal sealed class OverlayWindow : Window
         IntPtr lParam,
         ref bool handled)
     {
-        if (message ==
-            NativeMethods.WmNcHitTest)
+        if (message == NativeMethods.WmNcHitTest)
         {
             handled = true;
-
-            return new IntPtr(
-                NativeMethods.HtTransparent);
+            return new IntPtr(NativeMethods.HtTransparent);
         }
 
         return IntPtr.Zero;
@@ -167,20 +128,16 @@ internal sealed class OverlayWindow : Window
 
     private void PlaceExactly()
     {
-        if (_handle ==
-            IntPtr.Zero)
+        if (_handle == IntPtr.Zero)
         {
             return;
         }
 
-        var taskbar =
-            ProtectionArea.FindTaskbarForScreen(
-                _screen);
+        var taskbar = DisplayArea.FindTaskbarForScreen(_screen);
 
         NativeMethods.SetWindowPos(
             _handle,
-            taskbar !=
-                IntPtr.Zero
+            taskbar != IntPtr.Zero
                 ? taskbar
                 : NativeMethods.HwndTopmost,
             _protectionBounds.Left,
@@ -196,13 +153,10 @@ internal sealed class OverlayWindow : Window
     {
         if (_source is not null)
         {
-            _source.RemoveHook(
-                WindowProcedure);
-
+            _source.RemoveHook(WindowProcedure);
             _source = null;
         }
 
-        base.OnClosed(
-            eventArgs);
+        base.OnClosed(eventArgs);
     }
 }

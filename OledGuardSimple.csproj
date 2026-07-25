@@ -3,20 +3,18 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
-    <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
-    <AssemblyName>OledGuard</AssemblyName>
-    <RootNamespace>OledGuard</RootNamespace>
-    <Version>4.9.2</Version>
-    <Product>OledGuard</Product>
-    <Description>Protection OLED propre par zones actives stables et rendu vectoriel.</Description>
-    <Authors>OledGuard contributors</Authors>
-    <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>x64</Platforms>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>OledGuardSimple</AssemblyName>
+    <RootNamespace>OledGuardSimple</RootNamespace>
+    <Version>1.0.0</Version>
+    <Product>OledGuardSimple</Product>
+    <Description>Masque OLED minimal par fenêtre active, zones actives et curseur.</Description>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>

@@ -1,35 +1,37 @@
-# OledGuard — moteur simple de stabilité
+# OledGuardSimple
 
-OledGuard assombrit les grandes zones lumineuses qui restent réellement statiques. Il ne cherche plus à détecter une fenêtre active et n'ajoute aucun halo, chemin de souris ou effet artificiel.
+Projet entièrement neuf. Il ne copie, n'importe et ne modifie aucun fichier de l'ancien OledGuard.
 
-## Principe
+## Comportement unique
 
-- L'écran est découpé en grandes zones de 64 × 64 pixels par défaut.
-- Chaque zone est comparée à des références courte, moyenne et longue.
-- Une zone doit rester stable sur les trois temporalités et dépasser le délai configuré avant de pouvoir être assombrie.
-- Les zones voisines sont nettoyées avec une règle de majorité bidirectionnelle.
-- Un petit îlot sombre est supprimé ; un petit trou clair entouré de zones sombres est comblé.
-- Les composantes trop petites sont ignorées.
-- La luminosité est évaluée sur toute la région : une région déjà très sombre n'est pas masquée inutilement.
-- Une activité réelle fait réapparaître la zone rapidement.
+- La nouvelle fenêtre active est entièrement visible pendant 3 secondes.
+- Capture toutes les 20 ms.
+- Les pixels modifiés sont regroupés uniquement lorsqu'ils sont réellement connectés.
+- Une petite zone détectée reste visible 3 secondes puis s'assombrit.
+- Une zone encore active aux étapes 1 s, 3 s et 5 s est validée et reste visible 30 secondes après sa dernière activité.
+- Le rectangle d'une zone s'agrandit immédiatement et se resserre toutes les 500 ms sur l'activité réelle.
+- Le curseur n'a aucune traînée.
+- Le petit trou du curseur suit sa position actuelle.
+- Le composant animé connecté près du curseur est révélé en 20 ms.
+- Un élément statique sous le curseur est estimé localement par couleur et contours, sans dessiner une trace derrière le curseur.
+- La barre des tâches est exclue de l'overlay et reste au-dessus.
 
-## Réglages conseillés
+## Raccourcis
 
-- zones : 64 px ;
-- références : 2 s, 15 s et 60 s ;
-- délai statique : 120 s ;
-- fondu : 20 s ;
-- assombrissement maximal : 85 % ;
-- filtre : majorité 6/9, deux passes ;
-- région minimale : quatre cellules ;
-- trou clair maximal : trois cellules.
+- `Ctrl + Alt + O` : activer/désactiver le masque.
+- `Ctrl + Alt + Q` : quitter.
 
-## Commandes
+## Construire
 
-- `Ctrl + Alt + O` : activer ou désactiver ;
-- `Ctrl + Alt + R` : révéler tout pendant 10 secondes ;
-- clic droit sur l'icône : paramètres et fermeture.
+Depuis PowerShell dans ce dossier :
 
-## Mémoire
+```powershell
+dotnet publish .\OledGuardSimple.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+```
 
-Pour un écran 4K avec des cellules de 64 px et quatre échantillons par côté, la capture d'analyse mesure environ 240 × 136 pixels. Le moteur conserve quatre petits tampons réutilisés, sans historique vidéo 4K. L'overlay Windows reste la principale allocation graphique.
+Le fichier final se trouve dans :
+
+```text
+bin\Release
+et8.0-windows\win-x64\publish\OledGuardSimple.exe
+```
