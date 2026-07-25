@@ -325,7 +325,7 @@ internal sealed class MaskSurface : FrameworkElement
             addition);
     }
 
-    private static Brush CreateBlackBrush(
+    private static System.Windows.Media.Brush CreateBlackBrush(
         double opacity)
     {
         var brush =
