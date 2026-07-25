@@ -1,59 +1,41 @@
 using System.Windows;
 using System.Windows.Media;
 
-namespace OledGuardSimple;
-
-internal readonly record struct RevealRegion(
-    Rect NormalizedBounds,
-    double Opacity);
-
-internal readonly record struct CursorHole(
-    System.Windows.Point NormalizedPosition,
-    double NormalizedRadiusX,
-    double NormalizedRadiusY);
+namespace OledGuard;
 
 internal sealed class MaskSurface : FrameworkElement
 {
-    private RevealRegion[] _regions =
-        Array.Empty<RevealRegion>();
-
-    private CursorHole[] _cursorHoles =
-        Array.Empty<CursorHole>();
-
+    private MaskRegion[] _regions =
+        Array.Empty<MaskRegion>();
+    private MouseReveal[] _mouseReveals =
+        Array.Empty<MouseReveal>();
     private double _maximumOpacity;
 
     public MaskSurface()
     {
-        IsHitTestVisible =
-            false;
-
-        SnapsToDevicePixels =
-            true;
-
-        UseLayoutRounding =
-            true;
+        IsHitTestVisible = false;
+        SnapsToDevicePixels = true;
+        UseLayoutRounding = true;
     }
 
     public void UpdateScene(
         double maximumOpacity,
-        IReadOnlyList<RevealRegion> regions,
-        IReadOnlyList<CursorHole> cursorHoles)
+        IReadOnlyList<MaskRegion> regions,
+        IReadOnlyList<MouseReveal> mouseReveals)
     {
         _maximumOpacity =
             Math.Clamp(
                 maximumOpacity,
                 0.0,
                 1.0);
-
         _regions =
             regions.Count == 0
-                ? Array.Empty<RevealRegion>()
+                ? Array.Empty<MaskRegion>()
                 : regions.ToArray();
-
-        _cursorHoles =
-            cursorHoles.Count == 0
-                ? Array.Empty<CursorHole>()
-                : cursorHoles.ToArray();
+        _mouseReveals =
+            mouseReveals.Count == 0
+                ? Array.Empty<MouseReveal>()
+                : mouseReveals.ToArray();
 
         InvalidateVisual();
     }
@@ -61,11 +43,10 @@ internal sealed class MaskSurface : FrameworkElement
     protected override void OnRender(
         DrawingContext drawingContext)
     {
-        base.OnRender(
-            drawingContext);
+        base.OnRender(drawingContext);
 
-        if (ActualWidth <= 0.0 ||
-            ActualHeight <= 0.0 ||
+        if (ActualWidth <= 0 ||
+            ActualHeight <= 0 ||
             _maximumOpacity <= 0.0001)
         {
             return;
@@ -74,30 +55,34 @@ internal sealed class MaskSurface : FrameworkElement
         var outer =
             new RectangleGeometry(
                 new Rect(
-                    0.0,
-                    0.0,
+                    0,
+                    0,
                     ActualWidth,
                     ActualHeight));
 
-        Geometry? everyRegion = null;
-        Geometry? fullyClear = null;
-        Geometry? cursorGeometry = null;
+        Geometry? allRegionGeometry = null;
+        Geometry? clearGeometry = null;
+        Geometry? mouseGeometry = null;
 
-        foreach (var cursorHole in
-                 _cursorHoles)
+        foreach (var reveal in
+                 _mouseReveals)
         {
             var ellipse =
-                CreateCursorGeometry(
-                    cursorHole);
+                CreateMouseGeometry(reveal);
 
-            cursorGeometry =
+            if (ellipse is null)
+            {
+                continue;
+            }
+
+            mouseGeometry =
                 Union(
-                    cursorGeometry,
+                    mouseGeometry,
                     ellipse);
         }
 
-        fullyClear =
-            cursorGeometry;
+        clearGeometry =
+            mouseGeometry;
 
         foreach (var region in
                  _regions)
@@ -113,25 +98,29 @@ internal sealed class MaskSurface : FrameworkElement
                 CreateRectangleGeometry(
                     region.NormalizedBounds);
 
-            everyRegion =
+            if (rectangle is null)
+            {
+                continue;
+            }
+
+            allRegionGeometry =
                 Union(
-                    everyRegion,
+                    allRegionGeometry,
                     rectangle);
 
-            if (region.Opacity <=
-                0.0001)
+            if (region.Opacity <= 0.0001)
             {
-                fullyClear =
+                clearGeometry =
                     Union(
-                        fullyClear,
+                        clearGeometry,
                         rectangle);
             }
         }
 
         var everyHole =
             Union(
-                everyRegion,
-                cursorGeometry);
+                allRegionGeometry,
+                mouseGeometry);
 
         Geometry outside =
             everyHole is null
@@ -151,8 +140,7 @@ internal sealed class MaskSurface : FrameworkElement
             _regions
                 .Where(
                     region =>
-                        region.Opacity >
-                            0.0001 &&
+                        region.Opacity > 0.0001 &&
                         region.Opacity <
                             _maximumOpacity -
                             0.0001)
@@ -166,7 +154,7 @@ internal sealed class MaskSurface : FrameworkElement
                         group.Key);
 
         var lowerOpacityGeometry =
-            fullyClear;
+            clearGeometry;
 
         foreach (var group in
                  opacityGroups)
@@ -176,11 +164,19 @@ internal sealed class MaskSurface : FrameworkElement
             foreach (var region in
                      group)
             {
+                var rectangle =
+                    CreateRectangleGeometry(
+                        region.NormalizedBounds);
+
+                if (rectangle is null)
+                {
+                    continue;
+                }
+
                 groupGeometry =
                     Union(
                         groupGeometry,
-                        CreateRectangleGeometry(
-                            region.NormalizedBounds));
+                        rectangle);
             }
 
             if (groupGeometry is null)
@@ -222,7 +218,6 @@ internal sealed class MaskSurface : FrameworkElement
                     0.0,
                     1.0) *
                 ActualWidth);
-
         var top =
             Math.Floor(
                 Math.Clamp(
@@ -230,7 +225,6 @@ internal sealed class MaskSurface : FrameworkElement
                     0.0,
                     1.0) *
                 ActualHeight);
-
         var right =
             Math.Ceiling(
                 Math.Clamp(
@@ -238,7 +232,6 @@ internal sealed class MaskSurface : FrameworkElement
                     0.0,
                     1.0) *
                 ActualWidth);
-
         var bottom =
             Math.Ceiling(
                 Math.Clamp(
@@ -246,6 +239,12 @@ internal sealed class MaskSurface : FrameworkElement
                     0.0,
                     1.0) *
                 ActualHeight);
+
+        const double seamBleed = 1.0;
+        left = Math.Max(0.0, left - seamBleed);
+        top = Math.Max(0.0, top - seamBleed);
+        right = Math.Min(ActualWidth, right + seamBleed);
+        bottom = Math.Min(ActualHeight, bottom + seamBleed);
 
         if (right <= left ||
             bottom <= top)
@@ -261,15 +260,20 @@ internal sealed class MaskSurface : FrameworkElement
                 bottom - top));
     }
 
-    private Geometry? CreateCursorGeometry(
-        CursorHole cursorHole)
+    private Geometry? CreateMouseGeometry(
+        MouseReveal reveal)
     {
-        var radiusX =
-            cursorHole.NormalizedRadiusX *
+        var x =
+            reveal.NormalizedPosition.X *
             ActualWidth;
-
+        var y =
+            reveal.NormalizedPosition.Y *
+            ActualHeight;
+        var radiusX =
+            reveal.NormalizedRadiusX *
+            ActualWidth;
         var radiusY =
-            cursorHole.NormalizedRadiusY *
+            reveal.NormalizedRadiusY *
             ActualHeight;
 
         if (radiusX <= 0.1 ||
@@ -280,10 +284,8 @@ internal sealed class MaskSurface : FrameworkElement
 
         return new EllipseGeometry(
             new System.Windows.Point(
-                cursorHole.NormalizedPosition.X *
-                ActualWidth,
-                cursorHole.NormalizedPosition.Y *
-                ActualHeight),
+                x,
+                y),
             radiusX,
             radiusY);
     }
@@ -308,9 +310,8 @@ internal sealed class MaskSurface : FrameworkElement
             addition);
     }
 
-    private static System.Windows.Media.Brush
-        CreateBlackBrush(
-            double opacity)
+    private static System.Windows.Media.Brush CreateBlackBrush(
+        double opacity)
     {
         var brush =
             new SolidColorBrush(
@@ -324,7 +325,6 @@ internal sealed class MaskSurface : FrameworkElement
             };
 
         brush.Freeze();
-
         return brush;
     }
 }

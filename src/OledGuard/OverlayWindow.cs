@@ -1,72 +1,58 @@
 using System.Windows;
 using System.Windows.Interop;
-using DrawingRectangle = System.Drawing.Rectangle;
+using FormsScreen = System.Windows.Forms.Screen;
 
-namespace OledGuardSimple;
+namespace OledGuard;
 
 internal sealed class OverlayWindow : Window
 {
-    private readonly DrawingRectangle _bounds;
+    private readonly FormsScreen _screen;
     private readonly MaskSurface _surface;
-
     private IntPtr _handle;
     private HwndSource? _source;
 
     public OverlayWindow(
-        DrawingRectangle bounds)
+        FormsScreen screen)
     {
-        _bounds =
-            bounds;
-
+        _screen = screen;
         _surface =
             new MaskSurface();
 
         WindowStyle =
             WindowStyle.None;
-
         ResizeMode =
             ResizeMode.NoResize;
-
-        AllowsTransparency =
-            true;
-
+        AllowsTransparency = true;
         Background =
             System.Windows.Media.Brushes.Transparent;
-
-        ShowInTaskbar =
-            false;
-
-        ShowActivated =
-            false;
-
-        Topmost =
-            true;
-
-        Focusable =
-            false;
-
-        IsHitTestVisible =
-            false;
-
-        Content =
-            _surface;
+        ShowInTaskbar = false;
+        ShowActivated = false;
+        Topmost = true;
+        Focusable = false;
+        IsHitTestVisible = false;
+        Content = _surface;
 
         SourceInitialized +=
             OnSourceInitialized;
     }
 
+    public bool ExcludedFromCapture
+    {
+        get;
+        private set;
+    }
+
     public void SetScene(
         double maximumOpacity,
-        IReadOnlyList<RevealRegion> regions,
-        IReadOnlyList<CursorHole> cursorHoles)
+        IReadOnlyList<MaskRegion> regions,
+        IReadOnlyList<MouseReveal> mouseReveals)
     {
         if (!Dispatcher.CheckAccess())
         {
             var regionCopy =
                 regions.ToArray();
-
-            var cursorCopy =
-                cursorHoles.ToArray();
+            var mouseCopy =
+                mouseReveals.ToArray();
 
             Dispatcher.BeginInvoke(
                 new Action(
@@ -74,28 +60,18 @@ internal sealed class OverlayWindow : Window
                         SetScene(
                             maximumOpacity,
                             regionCopy,
-                            cursorCopy)));
-
+                            mouseCopy)));
             return;
         }
 
         _surface.UpdateScene(
             maximumOpacity,
             regions,
-            cursorHoles);
+            mouseReveals);
     }
 
     public void EnsureVisible()
     {
-        if (!Dispatcher.CheckAccess())
-        {
-            Dispatcher.BeginInvoke(
-                new Action(
-                    EnsureVisible));
-
-            return;
-        }
-
         if (!IsVisible)
         {
             Show();
@@ -106,16 +82,14 @@ internal sealed class OverlayWindow : Window
 
     private void OnSourceInitialized(
         object? sender,
-        EventArgs eventArgs)
+        EventArgs e)
     {
         _handle =
-            new WindowInteropHelper(
-                this).Handle;
-
+            new WindowInteropHelper(this)
+                .Handle;
         _source =
             HwndSource.FromHwnd(
                 _handle);
-
         _source?.AddHook(
             WindowProcedure);
 
@@ -124,7 +98,6 @@ internal sealed class OverlayWindow : Window
                     _handle,
                     NativeMethods.GwlExStyle)
                 .ToInt64();
-
         var updatedStyle =
             currentStyle |
             NativeMethods.WsExTransparent |
@@ -137,15 +110,16 @@ internal sealed class OverlayWindow : Window
             new IntPtr(
                 updatedStyle));
 
-        NativeMethods.SetWindowDisplayAffinity(
-            _handle,
-            NativeMethods.WdaExcludeFromCapture);
+        ExcludedFromCapture =
+            NativeMethods.SetWindowDisplayAffinity(
+                _handle,
+                NativeMethods.WdaExcludeFromCapture);
 
         PlaceExactly();
     }
 
     private IntPtr WindowProcedure(
-        IntPtr window,
+        IntPtr hwnd,
         int message,
         IntPtr wParam,
         IntPtr lParam,
@@ -154,14 +128,25 @@ internal sealed class OverlayWindow : Window
         if (message ==
             NativeMethods.WmNcHitTest)
         {
-            handled =
-                true;
-
+            handled = true;
             return new IntPtr(
                 NativeMethods.HtTransparent);
         }
 
         return IntPtr.Zero;
+    }
+
+    protected override void OnClosed(
+        EventArgs e)
+    {
+        if (_source is not null)
+        {
+            _source.RemoveHook(
+                WindowProcedure);
+            _source = null;
+        }
+
+        base.OnClosed(e);
     }
 
     private void PlaceExactly()
@@ -172,30 +157,17 @@ internal sealed class OverlayWindow : Window
             return;
         }
 
+        var bounds =
+            _screen.Bounds;
+
         NativeMethods.SetWindowPos(
             _handle,
             NativeMethods.HwndTopmost,
-            _bounds.Left,
-            _bounds.Top,
-            _bounds.Width,
-            _bounds.Height,
+            bounds.Left,
+            bounds.Top,
+            bounds.Width,
+            bounds.Height,
             NativeMethods.SwpNoActivate |
             NativeMethods.SwpShowWindow);
-    }
-
-    protected override void OnClosed(
-        EventArgs eventArgs)
-    {
-        if (_source is not null)
-        {
-            _source.RemoveHook(
-                WindowProcedure);
-
-            _source =
-                null;
-        }
-
-        base.OnClosed(
-            eventArgs);
     }
 }

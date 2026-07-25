@@ -3,5 +3,3 @@ obj/
 publish/
 .vs/
 *.user
-*.suo
-*.pdb
