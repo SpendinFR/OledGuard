@@ -1,0 +1,33 @@
+name: Build OledGuardFresh
+
+on:
+  push:
+    branches:
+      - oledguard-fresh-total
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish normal files
+        run: dotnet publish OledGuardFresh.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=false -p:PublishReadyToRun=false -o publish
+
+      - name: Upload application
+        uses: actions/upload-artifact@v4
+        with:
+          name: OledGuardFresh-win-x64
+          path: publish/**
+          if-no-files-found: error
