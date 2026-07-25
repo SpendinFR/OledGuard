@@ -1,21 +1,37 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+using DrawingRectangle = System.Drawing.Rectangle;
 using FormsScreen = System.Windows.Forms.Screen;
 
 namespace OledGuard;
 
 internal sealed class OverlayWindow : Window
 {
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeWindowRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
     private readonly FormsScreen _screen;
+    private readonly DrawingRectangle
+        _protectionBounds;
     private readonly MaskSurface _surface;
+
     private IntPtr _handle;
     private HwndSource? _source;
-    private bool _temporarilyHidden;
 
     public OverlayWindow(
         FormsScreen screen)
     {
         _screen = screen;
+        _protectionBounds =
+            ProtectionArea.GetBounds(
+                screen);
         _surface =
             new MaskSurface();
 
@@ -41,41 +57,6 @@ internal sealed class OverlayWindow : Window
     {
         get;
         private set;
-    }
-
-    public void SetTemporarilyHidden(
-        bool hidden)
-    {
-        if (!Dispatcher.CheckAccess())
-        {
-            Dispatcher.BeginInvoke(
-                new Action(
-                    () =>
-                        SetTemporarilyHidden(
-                            hidden)));
-            return;
-        }
-
-        if (_temporarilyHidden ==
-            hidden)
-        {
-            return;
-        }
-
-        _temporarilyHidden =
-            hidden;
-
-        if (hidden)
-        {
-            if (IsVisible)
-            {
-                Hide();
-            }
-
-            return;
-        }
-
-        EnsureVisible();
     }
 
     public void SetScene(
@@ -108,8 +89,11 @@ internal sealed class OverlayWindow : Window
 
     public void EnsureVisible()
     {
-        if (_temporarilyHidden)
+        if (!Dispatcher.CheckAccess())
         {
+            Dispatcher.BeginInvoke(
+                new Action(
+                    EnsureVisible));
             return;
         }
 
@@ -126,8 +110,8 @@ internal sealed class OverlayWindow : Window
         EventArgs e)
     {
         _handle =
-            new WindowInteropHelper(this)
-                .Handle;
+            new WindowInteropHelper(
+                this).Handle;
         _source =
             HwndSource.FromHwnd(
                 _handle);
@@ -177,6 +161,98 @@ internal sealed class OverlayWindow : Window
         return IntPtr.Zero;
     }
 
+    private void PlaceExactly()
+    {
+        if (_handle ==
+            IntPtr.Zero)
+        {
+            return;
+        }
+
+        var taskbar =
+            FindTaskbarForScreen();
+
+        NativeMethods.SetWindowPos(
+            _handle,
+            taskbar != IntPtr.Zero
+                ? taskbar
+                : NativeMethods.HwndTopmost,
+            _protectionBounds.Left,
+            _protectionBounds.Top,
+            _protectionBounds.Width,
+            _protectionBounds.Height,
+            NativeMethods.SwpNoActivate |
+            NativeMethods.SwpShowWindow);
+    }
+
+    private IntPtr FindTaskbarForScreen()
+    {
+        var primary =
+            FindWindow(
+                "Shell_TrayWnd",
+                null);
+
+        if (WindowTouchesScreen(
+                primary))
+        {
+            return primary;
+        }
+
+        var current =
+            IntPtr.Zero;
+
+        while (true)
+        {
+            current =
+                FindWindowEx(
+                    IntPtr.Zero,
+                    current,
+                    "Shell_SecondaryTrayWnd",
+                    null);
+
+            if (current ==
+                IntPtr.Zero)
+            {
+                break;
+            }
+
+            if (WindowTouchesScreen(
+                    current))
+            {
+                return current;
+            }
+        }
+
+        return IntPtr.Zero;
+    }
+
+    private bool WindowTouchesScreen(
+        IntPtr window)
+    {
+        if (window ==
+                IntPtr.Zero ||
+            !GetWindowRect(
+                window,
+                out var native))
+        {
+            return false;
+        }
+
+        var rectangle =
+            DrawingRectangle.FromLTRB(
+                native.Left,
+                native.Top,
+                native.Right,
+                native.Bottom);
+        var intersection =
+            DrawingRectangle.Intersect(
+                rectangle,
+                _screen.Bounds);
+
+        return intersection.Width > 0 &&
+               intersection.Height > 0;
+    }
+
     protected override void OnClosed(
         EventArgs e)
     {
@@ -187,28 +263,29 @@ internal sealed class OverlayWindow : Window
             _source = null;
         }
 
-        base.OnClosed(e);
+        base.OnClosed(
+            e);
     }
 
-    private void PlaceExactly()
-    {
-        if (_handle ==
-            IntPtr.Zero)
-        {
-            return;
-        }
+    [DllImport(
+        "user32.dll",
+        CharSet = CharSet.Unicode)]
+    private static extern IntPtr FindWindow(
+        string? className,
+        string? windowName);
 
-        var bounds =
-            _screen.Bounds;
+    [DllImport(
+        "user32.dll",
+        CharSet = CharSet.Unicode)]
+    private static extern IntPtr FindWindowEx(
+        IntPtr parent,
+        IntPtr childAfter,
+        string? className,
+        string? windowName);
 
-        NativeMethods.SetWindowPos(
-            _handle,
-            NativeMethods.HwndTopmost,
-            bounds.Left,
-            bounds.Top,
-            bounds.Width,
-            bounds.Height,
-            NativeMethods.SwpNoActivate |
-            NativeMethods.SwpShowWindow);
-    }
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(
+        IntPtr window,
+        out NativeWindowRect rectangle);
 }

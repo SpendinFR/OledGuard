@@ -5,7 +5,7 @@ namespace OledGuard;
 
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 49;
+    public const int CurrentSchemaVersion = 50;
 
     public int SchemaVersion { get; set; }
     public bool Enabled { get; set; } = true;
@@ -15,7 +15,7 @@ public sealed class AppSettings
 
     public int MotionZoneCaptureWidth { get; set; } = 1280;
     public int MotionZoneSamplesPerCell { get; set; } = 4;
-    public int MotionZoneSamplingMilliseconds { get; set; } = 20;
+    public int MotionZoneSamplingMilliseconds { get; set; } = 80;
     public int MotionZonePixelThreshold { get; set; } = 8;
     public double MotionZoneChangedFraction { get; set; } = 0.08;
 
@@ -37,7 +37,7 @@ public sealed class AppSettings
     public int MotionZoneRecurringWindowMilliseconds { get; set; } = 5_000;
     public int MotionZoneRecurringMinimumSpanMilliseconds { get; set; } = 600;
     public int MotionZoneRecurringHits { get; set; } = 4;
-    public int MotionZoneRecurringHoldMilliseconds { get; set; } = 30_000;
+    public int MotionZoneRecurringHoldMilliseconds { get; set; } = 3_000;
 
     public int MotionZoneDimDurationMilliseconds { get; set; } = 1_200;
     public int MotionZoneDimSteps { get; set; } = 6;
@@ -190,6 +190,19 @@ public sealed class AppSettings
             if (ForegroundWindowRevealMilliseconds == 1_500)
             {
                 ForegroundWindowRevealMilliseconds = 3_000;
+            }
+        }
+
+        if (SchemaVersion < 50)
+        {
+            if (MotionZoneSamplingMilliseconds == 20)
+            {
+                MotionZoneSamplingMilliseconds = 80;
+            }
+
+            if (MotionZoneRecurringHoldMilliseconds == 30_000)
+            {
+                MotionZoneRecurringHoldMilliseconds = 3_000;
             }
         }
 
