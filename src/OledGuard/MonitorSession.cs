@@ -3238,15 +3238,6 @@ internal sealed partial class MonitorSession : IDisposable
             : string.Empty;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct NativeWindowRect
-    {
-        public int Left;
-        public int Top;
-        public int Right;
-        public int Bottom;
-    }
-
     private delegate bool EnumWindowsProc(
         IntPtr window,
         IntPtr parameter);
@@ -3262,12 +3253,6 @@ internal sealed partial class MonitorSession : IDisposable
         IntPtr window,
         StringBuilder className,
         int maximumCharacters);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetWindowRect(
-        IntPtr window,
-        out NativeWindowRect rectangle);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
