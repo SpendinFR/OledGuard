@@ -3011,6 +3011,24 @@ internal sealed partial class MonitorSession : IDisposable
             return false;
         }
 
+        // Certains conteneurs DirectUI englobent à la fois la liste des
+        // fichiers et le volet de navigation vertical. On trouve le vrai
+        // contrôle de navigation et on commence la zone active à son bord
+        // droit. Aucun pourcentage fixe n'est appliqué.
+        if (TryGetExplorerNavigationRightEdge(
+                foregroundWindow,
+                rectangle,
+                out var navigationRight) &&
+            navigationRight >
+                rectangle.Left &&
+            navigationRight <
+                rectangle.Right -
+                80)
+        {
+            rectangle.Left =
+                navigationRight;
+        }
+
         var screen =
             _screen.Bounds;
         var left =
@@ -3145,10 +3163,13 @@ internal sealed partial class MonitorSession : IDisposable
                 var priority =
                     GetWindowClassName(child) switch
                     {
-                        "SysListView32" => 4,
-                        "SHELLDLL_DefView" => 3,
-                        "DUIViewWndClassName" => 3,
-                        "DirectUIHWND" => 2,
+                        // Contrôles exacts de la liste/grille de fichiers.
+                        "SysListView32" => 8,
+                        "SHELLDLL_DefView" => 7,
+
+                        // Conteneurs modernes : seulement en repli.
+                        "DirectUIHWND" => 3,
+                        "DUIViewWndClassName" => 2,
                         _ => 0
                     };
 
@@ -3163,9 +3184,26 @@ internal sealed partial class MonitorSession : IDisposable
                         explorerHeight * 2 / 3
                         ? explorerArea
                         : 0L;
+
+                // À priorité comparable, le panneau des fichiers commence
+                // normalement après le volet de navigation, contrairement au
+                // grand conteneur qui part du bord gauche de la fenêtre.
+                var contentInsetBonus =
+                    childRectangle.Left >=
+                        explorerRectangle.Left +
+                        explorerWidth *
+                        8 /
+                        100
+                        ? explorerArea *
+                          4L
+                        : 0L;
+
                 var score =
-                    priority * explorerArea * 10L +
+                    priority *
+                        explorerArea *
+                        10L +
                     lowerBonus +
+                    contentInsetBonus +
                     area;
 
                 if (score > bestScore)
@@ -3186,6 +3224,168 @@ internal sealed partial class MonitorSession : IDisposable
         GC.KeepAlive(callback);
 
         return bestWindow;
+    }
+
+    private static bool TryGetExplorerNavigationRightEdge(
+        IntPtr explorerWindow,
+        NativeWindowRect contentRectangle,
+        out int rightEdge)
+    {
+        rightEdge =
+            contentRectangle.Left;
+
+        if (!GetWindowRect(
+                explorerWindow,
+                out var explorerRectangle))
+        {
+            return false;
+        }
+
+        var explorerWidth =
+            Math.Max(
+                1,
+                explorerRectangle.Right -
+                explorerRectangle.Left);
+        var explorerHeight =
+            Math.Max(
+                1,
+                explorerRectangle.Bottom -
+                explorerRectangle.Top);
+        var explorerArea =
+            (long)explorerWidth *
+            explorerHeight;
+        var contentHeight =
+            Math.Max(
+                1,
+                contentRectangle.Bottom -
+                contentRectangle.Top);
+
+        var found =
+            false;
+        var bestScore =
+            long.MinValue;
+        var bestRight =
+            contentRectangle.Left;
+
+        EnumWindowsProc callback =
+            (child, parameter) =>
+            {
+                if (!IsWindowVisible(
+                        child) ||
+                    !GetWindowRect(
+                        child,
+                        out var childRectangle))
+                {
+                    return true;
+                }
+
+                var width =
+                    childRectangle.Right -
+                    childRectangle.Left;
+                var height =
+                    childRectangle.Bottom -
+                    childRectangle.Top;
+
+                // Le volet de navigation est une colonne haute accolée au
+                // bord gauche, jamais une barre horizontale ni le contenu
+                // principal occupant presque toute la fenêtre.
+                if (width <
+                        80 ||
+                    width >
+                        explorerWidth *
+                        45 /
+                        100 ||
+                    height <
+                        contentHeight *
+                        55 /
+                        100 ||
+                    childRectangle.Left >
+                        explorerRectangle.Left +
+                        explorerWidth *
+                        15 /
+                        100 ||
+                    childRectangle.Right <=
+                        contentRectangle.Left ||
+                    childRectangle.Right >=
+                        contentRectangle.Right -
+                        80)
+                {
+                    return true;
+                }
+
+                var verticalOverlap =
+                    Math.Max(
+                        0,
+                        Math.Min(
+                            childRectangle.Bottom,
+                            contentRectangle.Bottom) -
+                        Math.Max(
+                            childRectangle.Top,
+                            contentRectangle.Top));
+
+                if (verticalOverlap <
+                    Math.Min(
+                        height,
+                        contentHeight) *
+                    65 /
+                    100)
+                {
+                    return true;
+                }
+
+                var priority =
+                    GetWindowClassName(
+                        child) switch
+                    {
+                        "SysTreeView32" => 8,
+                        "NamespaceTreeControl" => 8,
+                        "TreeView" => 7,
+                        "DirectUIHWND" => 3,
+                        "DUIViewWndClassName" => 2,
+                        _ => 0
+                    };
+
+                if (priority ==
+                    0)
+                {
+                    return true;
+                }
+
+                var score =
+                    priority *
+                        explorerArea *
+                        10L +
+                    (long)verticalOverlap *
+                        width;
+
+                if (score >
+                    bestScore)
+                {
+                    bestScore =
+                        score;
+                    bestRight =
+                        childRectangle.Right;
+                    found =
+                        true;
+                }
+
+                return true;
+            };
+
+        EnumChildWindows(
+            explorerWindow,
+            callback,
+            IntPtr.Zero);
+        GC.KeepAlive(
+            callback);
+
+        if (found)
+        {
+            rightEdge =
+                bestRight;
+        }
+
+        return found;
     }
 
     private static bool IsWindowsExplorerWindow(
