@@ -415,19 +415,8 @@ internal sealed partial class MonitorSession : IDisposable
             var trackedChanged =
                 UpdateTrackedRegions(now);
 
-            // Dans l'Explorateur Windows, les changements de survol,
-            // de sélection, de défilement ou de contenu sont de vraies
-            // activités de la fenêtre. Ils doivent maintenir le grand
-            // rectangle actif, pas seulement créer de petites bandes.
-            var explorerActivityChanged =
-                _detectedRegions.Count > 0 &&
-                RefreshExplorerForegroundActivity(
-                    foregroundWindow,
-                    now);
-
             if (interactionChanged ||
-                trackedChanged ||
-                explorerActivityChanged)
+                trackedChanged)
             {
                 _maskDirty = true;
             }
@@ -1989,13 +1978,6 @@ internal sealed partial class MonitorSession : IDisposable
                 localY;
             _lastCursorTicks =
                 now;
-
-            // Le déplacement continu de la souris dans un dossier Windows
-            // maintient la fenêtre entière active. Le délai de trois secondes
-            // ne commence qu'après l'arrêt du mouvement.
-            RefreshExplorerForegroundActivity(
-                GetForegroundWindow(),
-                now);
         }
 
         var clearedSuppressedTrail =
@@ -2779,84 +2761,6 @@ internal sealed partial class MonitorSession : IDisposable
             1000.0);
     }
 
-    private bool RefreshExplorerForegroundActivity(
-        IntPtr foregroundWindow,
-        long now)
-    {
-        if (!IsWindowsExplorerWindow(
-                foregroundWindow))
-        {
-            return false;
-        }
-
-        TrackedRegion? foregroundRegion =
-            null;
-
-        foreach (var region in
-                 _trackedRegions)
-        {
-            if (!region.IsForegroundIntroduction)
-            {
-                continue;
-            }
-
-            foregroundRegion =
-                region;
-            break;
-        }
-
-        if (foregroundRegion is null)
-        {
-            AddForegroundIntroduction(
-                foregroundWindow,
-                now);
-
-            return true;
-        }
-
-        var changed =
-            foregroundRegion.DimStep !=
-                0 ||
-            foregroundRegion.LastMotionTicks !=
-                now;
-
-        foregroundRegion.LastMotionTicks =
-            now;
-        foregroundRegion.LastHitCaptureTicks =
-            now;
-        foregroundRegion.DimStep =
-            0;
-
-        return changed;
-    }
-
-    private static bool IsWindowsExplorerWindow(
-        IntPtr window)
-    {
-        if (window ==
-            IntPtr.Zero)
-        {
-            return false;
-        }
-
-        var className =
-            new StringBuilder(
-                128);
-
-        if (GetClassName(
-                window,
-                className,
-                className.Capacity) <=
-            0)
-        {
-            return false;
-        }
-
-        return className.ToString() is
-            "CabinetWClass" or
-            "ExploreWClass";
-    }
-
     private static string GetWindowTitle(
         IntPtr window)
     {
@@ -2883,14 +2787,6 @@ internal sealed partial class MonitorSession : IDisposable
     [DllImport("user32.dll")]
     private static extern IntPtr
         GetForegroundWindow();
-
-    [DllImport(
-        "user32.dll",
-        CharSet = CharSet.Unicode)]
-    private static extern int GetClassName(
-        IntPtr window,
-        StringBuilder className,
-        int maximumCharacters);
 
     [DllImport(
         "user32.dll",
