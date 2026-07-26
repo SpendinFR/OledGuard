@@ -415,8 +415,19 @@ internal sealed partial class MonitorSession : IDisposable
             var trackedChanged =
                 UpdateTrackedRegions(now);
 
+            // L'Explorateur génère une région pour l'ancienne ligne survolée
+            // et une autre pour la nouvelle. Sans nettoyage, ces régions
+            // restent trois secondes et forment plusieurs bandes parallèles.
+            // On conserve seulement la plus petite région locale contenant
+            // le curseur ; toute la fenêtre n'est jamais rafraîchie.
+            var explorerLocalChanged =
+                KeepOnlyExplorerActiveLocalRegion(
+                    foregroundWindow,
+                    now);
+
             if (interactionChanged ||
-                trackedChanged)
+                trackedChanged ||
+                explorerLocalChanged)
             {
                 _maskDirty = true;
             }
@@ -2761,6 +2772,239 @@ internal sealed partial class MonitorSession : IDisposable
             1000.0);
     }
 
+    private bool KeepOnlyExplorerActiveLocalRegion(
+        IntPtr foregroundWindow,
+        long now)
+    {
+        if (!IsWindowsExplorerWindow(
+                foregroundWindow))
+        {
+            return false;
+        }
+
+        TrackedRegion? active =
+            null;
+
+        var bestScore =
+            long.MaxValue;
+
+        if (NativeMethods.GetCursorPos(
+                out var cursor))
+        {
+            var bounds =
+                _screen.Bounds;
+
+            if (bounds.Contains(
+                    cursor.X,
+                    cursor.Y))
+            {
+                var cursorColumn =
+                    Math.Clamp(
+                        (cursor.X -
+                         bounds.Left) *
+                        _columns /
+                        Math.Max(
+                            1,
+                            bounds.Width),
+                        0,
+                        _columns -
+                            1);
+
+                var cursorRow =
+                    Math.Clamp(
+                        (cursor.Y -
+                         bounds.Top) *
+                        _rows /
+                        Math.Max(
+                            1,
+                            bounds.Height),
+                        0,
+                        _rows -
+                            1);
+
+                foreach (var region in
+                         _trackedRegions)
+                {
+                    if (region
+                        .IsForegroundIntroduction)
+                    {
+                        continue;
+                    }
+
+                    var area =
+                        RectangleArea(
+                            region.MinimumRow,
+                            region.MaximumRow,
+                            region.MinimumColumn,
+                            region.MaximumColumn);
+
+                    // Une région locale ne doit jamais être assimilée
+                    // à une grande partie de la fenêtre.
+                    if (area >
+                        _rawMotion.Length *
+                        0.20)
+                    {
+                        continue;
+                    }
+
+                    var rowDistance =
+                        DistanceToRange(
+                            cursorRow,
+                            region.MinimumRow,
+                            region.MaximumRow);
+
+                    var columnDistance =
+                        DistanceToRange(
+                            cursorColumn,
+                            region.MinimumColumn,
+                            region.MaximumColumn);
+
+                    var containsCursor =
+                        rowDistance ==
+                            0 &&
+                        columnDistance ==
+                            0;
+
+                    // Une tolérance d'une cellule couvre les arrondis
+                    // entre pixels écran et grille de capture.
+                    if (!containsCursor &&
+                        (rowDistance >
+                             1 ||
+                         columnDistance >
+                             1))
+                    {
+                        continue;
+                    }
+
+                    var score =
+                        (containsCursor
+                            ? 0L
+                            : 1_000_000_000L) +
+                        (rowDistance +
+                         columnDistance) *
+                            1_000_000L +
+                        area;
+
+                    if (score >=
+                        bestScore)
+                    {
+                        continue;
+                    }
+
+                    active =
+                        region;
+
+                    bestScore =
+                        score;
+                }
+            }
+        }
+
+        var changed =
+            false;
+
+        for (var index =
+                 _trackedRegions.Count -
+                 1;
+             index >=
+                 0;
+             index--)
+        {
+            var region =
+                _trackedRegions[index];
+
+            if (region
+                    .IsForegroundIntroduction ||
+                ReferenceEquals(
+                    region,
+                    active))
+            {
+                continue;
+            }
+
+            _trackedRegions.RemoveAt(
+                index);
+
+            changed =
+                true;
+        }
+
+        if (active is null)
+        {
+            return changed;
+        }
+
+        if (active.DimStep !=
+            0)
+        {
+            active.DimStep =
+                0;
+
+            changed =
+                true;
+        }
+
+        // Tant que le curseur reste sur cet élément, seule cette zone locale
+        // demeure claire. Le délai de trois secondes démarre lorsqu'on la
+        // quitte, mais les autres boutons et zones restent assombris.
+        active.LastMotionTicks =
+            now;
+
+        active.LastHitCaptureTicks =
+            now;
+
+        return changed;
+    }
+
+    private static int DistanceToRange(
+        int value,
+        int minimum,
+        int maximum)
+    {
+        if (value <
+            minimum)
+        {
+            return minimum -
+                   value;
+        }
+
+        if (value >
+            maximum)
+        {
+            return value -
+                   maximum;
+        }
+
+        return 0;
+    }
+
+    private static bool IsWindowsExplorerWindow(
+        IntPtr window)
+    {
+        if (window ==
+            IntPtr.Zero)
+        {
+            return false;
+        }
+
+        var className =
+            new StringBuilder(
+                128);
+
+        if (GetClassName(
+                window,
+                className,
+                className.Capacity) <=
+            0)
+        {
+            return false;
+        }
+
+        return className.ToString() is
+            "CabinetWClass" or
+            "ExploreWClass";
+    }
+
     private static string GetWindowTitle(
         IntPtr window)
     {
@@ -2787,6 +3031,14 @@ internal sealed partial class MonitorSession : IDisposable
     [DllImport("user32.dll")]
     private static extern IntPtr
         GetForegroundWindow();
+
+    [DllImport(
+        "user32.dll",
+        CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(
+        IntPtr window,
+        StringBuilder className,
+        int maximumCharacters);
 
     [DllImport(
         "user32.dll",
