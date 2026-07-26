@@ -59,6 +59,7 @@ internal sealed partial class MonitorSession : IDisposable
         public bool Recurring;
         public int DimStep;
         public bool IsForegroundIntroduction;
+        public bool IsExplorerContent;
 
         public List<BoundsObservation> BoundsHistory { get; } =
             new();
@@ -113,6 +114,10 @@ internal sealed partial class MonitorSession : IDisposable
     private double _lastCursorX;
     private double _lastCursorY;
     private long _lastCursorTicks;
+
+    private IntPtr _explorerContentOwner;
+    private IntPtr _explorerContentWindow;
+    private long _explorerContentLookupTicks;
 
     public MonitorSession(
         FormsScreen screen,
@@ -398,7 +403,9 @@ internal sealed partial class MonitorSession : IDisposable
             BuildDetectedRegions();
             MergeNearbyDetectedRegions();
 
-            if (IsLargeSceneChange())
+            if (IsLargeSceneChange() &&
+                !IsWindowsExplorerWindow(
+                    foregroundWindow))
             {
                 ResetSceneToBaseline(
                     current,
@@ -412,22 +419,27 @@ internal sealed partial class MonitorSession : IDisposable
                 UpdateInteractionCompletion(
                     current,
                     now);
-            var trackedChanged =
-                UpdateTrackedRegions(now);
 
-            // L'Explorateur génère une région pour l'ancienne ligne survolée
-            // et une autre pour la nouvelle. Sans nettoyage, ces régions
-            // restent trois secondes et forment plusieurs bandes parallèles.
-            // On conserve seulement la plus petite région locale contenant
-            // le curseur ; toute la fenêtre n'est jamais rafraîchie.
-            var explorerLocalChanged =
-                KeepOnlyExplorerActiveLocalRegion(
+            bool trackedChanged;
+
+            if (TryUpdateExplorerContentActivity(
                     foregroundWindow,
-                    now);
+                    now,
+                    cursorMoved: false,
+                    out var explorerChanged))
+            {
+                trackedChanged =
+                    explorerChanged;
+            }
+            else
+            {
+                trackedChanged =
+                    UpdateTrackedRegions(
+                        now);
+            }
 
             if (interactionChanged ||
-                trackedChanged ||
-                explorerLocalChanged)
+                trackedChanged)
             {
                 _maskDirty = true;
             }
@@ -1989,6 +2001,17 @@ internal sealed partial class MonitorSession : IDisposable
                 localY;
             _lastCursorTicks =
                 now;
+
+            if (TryUpdateExplorerContentActivity(
+                    GetForegroundWindow(),
+                    now,
+                    cursorMoved: true,
+                    out var explorerChanged) &&
+                explorerChanged)
+            {
+                _maskDirty =
+                    true;
+            }
         }
 
         var clearedSuppressedTrail =
@@ -2772,137 +2795,56 @@ internal sealed partial class MonitorSession : IDisposable
             1000.0);
     }
 
-    private bool KeepOnlyExplorerActiveLocalRegion(
+    private bool TryUpdateExplorerContentActivity(
         IntPtr foregroundWindow,
-        long now)
+        long now,
+        bool cursorMoved,
+        out bool changed)
     {
-        if (!IsWindowsExplorerWindow(
-                foregroundWindow))
+        changed =
+            false;
+
+        if (!TryGetExplorerContentRegion(
+                foregroundWindow,
+                now,
+                out var content))
         {
             return false;
         }
 
-        TrackedRegion? active =
-            null;
+        var active =
+            cursorMoved &&
+            IsCursorInsideRegion(
+                content);
 
-        var bestScore =
-            long.MaxValue;
-
-        if (NativeMethods.GetCursorPos(
-                out var cursor))
+        if (!active)
         {
-            var bounds =
-                _screen.Bounds;
-
-            if (bounds.Contains(
-                    cursor.X,
-                    cursor.Y))
+            foreach (var detected in
+                     _detectedRegions)
             {
-                var cursorColumn =
-                    Math.Clamp(
-                        (cursor.X -
-                         bounds.Left) *
-                        _columns /
-                        Math.Max(
-                            1,
-                            bounds.Width),
-                        0,
-                        _columns -
-                            1);
-
-                var cursorRow =
-                    Math.Clamp(
-                        (cursor.Y -
-                         bounds.Top) *
-                        _rows /
-                        Math.Max(
-                            1,
-                            bounds.Height),
-                        0,
-                        _rows -
-                            1);
-
-                foreach (var region in
-                         _trackedRegions)
+                if (IntersectionArea(
+                        content.MinimumRow,
+                        content.MaximumRow,
+                        content.MinimumColumn,
+                        content.MaximumColumn,
+                        detected.MinimumRow,
+                        detected.MaximumRow,
+                        detected.MinimumColumn,
+                        detected.MaximumColumn) >
+                    0)
                 {
-                    if (region
-                        .IsForegroundIntroduction)
-                    {
-                        continue;
-                    }
-
-                    var area =
-                        RectangleArea(
-                            region.MinimumRow,
-                            region.MaximumRow,
-                            region.MinimumColumn,
-                            region.MaximumColumn);
-
-                    // Une région locale ne doit jamais être assimilée
-                    // à une grande partie de la fenêtre.
-                    if (area >
-                        _rawMotion.Length *
-                        0.20)
-                    {
-                        continue;
-                    }
-
-                    var rowDistance =
-                        DistanceToRange(
-                            cursorRow,
-                            region.MinimumRow,
-                            region.MaximumRow);
-
-                    var columnDistance =
-                        DistanceToRange(
-                            cursorColumn,
-                            region.MinimumColumn,
-                            region.MaximumColumn);
-
-                    var containsCursor =
-                        rowDistance ==
-                            0 &&
-                        columnDistance ==
-                            0;
-
-                    // Une tolérance d'une cellule couvre les arrondis
-                    // entre pixels écran et grille de capture.
-                    if (!containsCursor &&
-                        (rowDistance >
-                             1 ||
-                         columnDistance >
-                             1))
-                    {
-                        continue;
-                    }
-
-                    var score =
-                        (containsCursor
-                            ? 0L
-                            : 1_000_000_000L) +
-                        (rowDistance +
-                         columnDistance) *
-                            1_000_000L +
-                        area;
-
-                    if (score >=
-                        bestScore)
-                    {
-                        continue;
-                    }
-
                     active =
-                        region;
-
-                    bestScore =
-                        score;
+                        true;
+                    break;
                 }
             }
         }
 
-        var changed =
-            false;
+        TrackedRegion? contentRegion =
+            null;
 
+        // Toutes les petites bandes de survol sont supprimées.
+        // Seul le panneau Windows qui contient les fichiers peut subsister.
         for (var index =
                  _trackedRegions.Count -
                  1;
@@ -2913,96 +2855,364 @@ internal sealed partial class MonitorSession : IDisposable
             var region =
                 _trackedRegions[index];
 
-            if (region
-                    .IsForegroundIntroduction ||
-                ReferenceEquals(
-                    region,
-                    active))
+            if (region.IsForegroundIntroduction)
             {
+                continue;
+            }
+
+            if (region.IsExplorerContent &&
+                contentRegion is null)
+            {
+                contentRegion =
+                    region;
                 continue;
             }
 
             _trackedRegions.RemoveAt(
                 index);
-
             changed =
                 true;
         }
 
-        if (active is null)
+        if (!active)
         {
-            return changed;
+            return true;
         }
 
-        if (active.DimStep !=
-            0)
+        if (contentRegion is null)
         {
-            active.DimStep =
-                0;
+            _trackedRegions.Add(
+                new TrackedRegion
+                {
+                    MinimumRow = content.MinimumRow,
+                    MaximumRow = content.MaximumRow,
+                    MinimumColumn = content.MinimumColumn,
+                    MaximumColumn = content.MaximumColumn,
+                    CreatedTicks = now,
+                    WindowStartTicks = now,
+                    LastMotionTicks = now,
+                    LastHitCaptureTicks = now,
+                    MotionHits = 1,
+                    Recurring = false,
+                    DimStep = 0,
+                    IsExplorerContent = true
+                });
 
-            changed =
-                true;
+            return true;
         }
 
-        // Tant que le curseur reste sur cet élément, seule cette zone locale
-        // demeure claire. Le délai de trois secondes démarre lorsqu'on la
-        // quitte, mais les autres boutons et zones restent assombris.
-        active.LastMotionTicks =
-            now;
+        changed =
+            changed ||
+            contentRegion.MinimumRow != content.MinimumRow ||
+            contentRegion.MaximumRow != content.MaximumRow ||
+            contentRegion.MinimumColumn != content.MinimumColumn ||
+            contentRegion.MaximumColumn != content.MaximumColumn ||
+            contentRegion.DimStep != 0;
 
-        active.LastHitCaptureTicks =
+        contentRegion.MinimumRow =
+            content.MinimumRow;
+        contentRegion.MaximumRow =
+            content.MaximumRow;
+        contentRegion.MinimumColumn =
+            content.MinimumColumn;
+        contentRegion.MaximumColumn =
+            content.MaximumColumn;
+        contentRegion.LastMotionTicks =
             now;
+        contentRegion.LastHitCaptureTicks =
+            now;
+        contentRegion.DimStep =
+            0;
+        contentRegion.IsExplorerContent =
+            true;
 
-        return changed;
+        return true;
     }
 
-    private static int DistanceToRange(
-        int value,
-        int minimum,
-        int maximum)
+    private bool IsCursorInsideRegion(
+        DetectedRegion region)
     {
-        if (value <
-            minimum)
+        if (!NativeMethods.GetCursorPos(
+                out var cursor))
         {
-            return minimum -
-                   value;
+            return false;
         }
 
-        if (value >
-            maximum)
+        var bounds =
+            _screen.Bounds;
+
+        if (!bounds.Contains(
+                cursor.X,
+                cursor.Y))
         {
-            return value -
-                   maximum;
+            return false;
         }
 
-        return 0;
+        var column =
+            Math.Clamp(
+                (cursor.X - bounds.Left) *
+                    _columns /
+                    Math.Max(1, bounds.Width),
+                0,
+                _columns - 1);
+        var row =
+            Math.Clamp(
+                (cursor.Y - bounds.Top) *
+                    _rows /
+                    Math.Max(1, bounds.Height),
+                0,
+                _rows - 1);
+
+        return row >= region.MinimumRow &&
+               row <= region.MaximumRow &&
+               column >= region.MinimumColumn &&
+               column <= region.MaximumColumn;
+    }
+
+    private bool TryGetExplorerContentRegion(
+        IntPtr foregroundWindow,
+        long now,
+        out DetectedRegion region)
+    {
+        region =
+            default;
+
+        if (!IsWindowsExplorerWindow(
+                foregroundWindow))
+        {
+            _explorerContentOwner =
+                IntPtr.Zero;
+            _explorerContentWindow =
+                IntPtr.Zero;
+            _explorerContentLookupTicks =
+                0;
+            return false;
+        }
+
+        if (_explorerContentOwner != foregroundWindow ||
+            _explorerContentWindow == IntPtr.Zero ||
+            now - _explorerContentLookupTicks >=
+                ToStopwatchTicks(500))
+        {
+            _explorerContentOwner =
+                foregroundWindow;
+            _explorerContentWindow =
+                FindExplorerContentWindow(
+                    foregroundWindow);
+            _explorerContentLookupTicks =
+                now;
+        }
+
+        if (_explorerContentWindow == IntPtr.Zero ||
+            !GetWindowRect(
+                _explorerContentWindow,
+                out var rectangle))
+        {
+            return false;
+        }
+
+        var screen =
+            _screen.Bounds;
+        var left =
+            Math.Clamp(
+                rectangle.Left - screen.Left,
+                0,
+                screen.Width);
+        var top =
+            Math.Clamp(
+                rectangle.Top - screen.Top,
+                0,
+                screen.Height);
+        var right =
+            Math.Clamp(
+                rectangle.Right - screen.Left,
+                0,
+                screen.Width);
+        var bottom =
+            Math.Clamp(
+                rectangle.Bottom - screen.Top,
+                0,
+                screen.Height);
+
+        if (right - left < 80 ||
+            bottom - top < 80)
+        {
+            return false;
+        }
+
+        var minimumColumn =
+            Math.Clamp(
+                (int)Math.Floor(
+                    left * _columns /
+                    (double)Math.Max(1, screen.Width)),
+                0,
+                _columns - 1);
+        var maximumColumn =
+            Math.Clamp(
+                (int)Math.Ceiling(
+                    right * _columns /
+                    (double)Math.Max(1, screen.Width)) - 1,
+                minimumColumn,
+                _columns - 1);
+        var minimumRow =
+            Math.Clamp(
+                (int)Math.Floor(
+                    top * _rows /
+                    (double)Math.Max(1, screen.Height)),
+                0,
+                _rows - 1);
+        var maximumRow =
+            Math.Clamp(
+                (int)Math.Ceiling(
+                    bottom * _rows /
+                    (double)Math.Max(1, screen.Height)) - 1,
+                minimumRow,
+                _rows - 1);
+
+        region =
+            new DetectedRegion(
+                minimumRow,
+                maximumRow,
+                minimumColumn,
+                maximumColumn,
+                RectangleArea(
+                    minimumRow,
+                    maximumRow,
+                    minimumColumn,
+                    maximumColumn));
+
+        return true;
+    }
+
+    private static IntPtr FindExplorerContentWindow(
+        IntPtr explorerWindow)
+    {
+        if (!GetWindowRect(
+                explorerWindow,
+                out var explorerRectangle))
+        {
+            return IntPtr.Zero;
+        }
+
+        var explorerWidth =
+            Math.Max(
+                1,
+                explorerRectangle.Right -
+                explorerRectangle.Left);
+        var explorerHeight =
+            Math.Max(
+                1,
+                explorerRectangle.Bottom -
+                explorerRectangle.Top);
+        var explorerArea =
+            (long)explorerWidth *
+            explorerHeight;
+
+        var bestWindow =
+            IntPtr.Zero;
+        var bestScore =
+            long.MinValue;
+
+        EnumWindowsProc callback =
+            (child, parameter) =>
+            {
+                if (!IsWindowVisible(child) ||
+                    !GetWindowRect(
+                        child,
+                        out var childRectangle))
+                {
+                    return true;
+                }
+
+                var width =
+                    childRectangle.Right -
+                    childRectangle.Left;
+                var height =
+                    childRectangle.Bottom -
+                    childRectangle.Top;
+                var area =
+                    (long)width *
+                    height;
+
+                if (width < 80 ||
+                    height < 80 ||
+                    area < explorerArea * 0.08 ||
+                    area > explorerArea * 0.96)
+                {
+                    return true;
+                }
+
+                var priority =
+                    GetWindowClassName(child) switch
+                    {
+                        "SysListView32" => 4,
+                        "SHELLDLL_DefView" => 3,
+                        "DUIViewWndClassName" => 3,
+                        "DirectUIHWND" => 2,
+                        _ => 0
+                    };
+
+                if (priority == 0)
+                {
+                    return true;
+                }
+
+                var lowerBonus =
+                    childRectangle.Bottom >=
+                        explorerRectangle.Top +
+                        explorerHeight * 2 / 3
+                        ? explorerArea
+                        : 0L;
+                var score =
+                    priority * explorerArea * 10L +
+                    lowerBonus +
+                    area;
+
+                if (score > bestScore)
+                {
+                    bestScore =
+                        score;
+                    bestWindow =
+                        child;
+                }
+
+                return true;
+            };
+
+        EnumChildWindows(
+            explorerWindow,
+            callback,
+            IntPtr.Zero);
+        GC.KeepAlive(callback);
+
+        return bestWindow;
     }
 
     private static bool IsWindowsExplorerWindow(
         IntPtr window)
     {
-        if (window ==
-            IntPtr.Zero)
+        return GetWindowClassName(window) is
+            "CabinetWClass" or
+            "ExploreWClass";
+    }
+
+    private static string GetWindowClassName(
+        IntPtr window)
+    {
+        if (window == IntPtr.Zero)
         {
-            return false;
+            return string.Empty;
         }
 
         var className =
-            new StringBuilder(
-                128);
+            new StringBuilder(128);
 
-        if (GetClassName(
-                window,
-                className,
-                className.Capacity) <=
-            0)
-        {
-            return false;
-        }
-
-        return className.ToString() is
-            "CabinetWClass" or
-            "ExploreWClass";
+        return GetClassName(
+                   window,
+                   className,
+                   className.Capacity) > 0
+            ? className.ToString()
+            : string.Empty;
     }
 
     private static string GetWindowTitle(
@@ -3028,6 +3238,19 @@ internal sealed partial class MonitorSession : IDisposable
             : string.Empty;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeWindowRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    private delegate bool EnumWindowsProc(
+        IntPtr window,
+        IntPtr parameter);
+
     [DllImport("user32.dll")]
     private static extern IntPtr
         GetForegroundWindow();
@@ -3039,6 +3262,24 @@ internal sealed partial class MonitorSession : IDisposable
         IntPtr window,
         StringBuilder className,
         int maximumCharacters);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(
+        IntPtr window,
+        out NativeWindowRect rectangle);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(
+        IntPtr window);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumChildWindows(
+        IntPtr parent,
+        EnumWindowsProc callback,
+        IntPtr parameter);
 
     [DllImport(
         "user32.dll",
